@@ -130,7 +130,6 @@ class UserManager:
                     "settings": {
                         "hide_phone_number": True,
                         "can_join_groups": True,
-                        "can_see_profiles": True,
                         "inner_gif": None
                     }
                 }
@@ -263,7 +262,20 @@ class UserManager:
         verify = self.getUserByUName(username)
         if verify['status'] == "OK":return True
         else:return False
-    
+
+    def searchUser(self, username: str) -> dict:
+        users = self.getUsers()
+        finded_users = []
+
+        for user in users:
+            user = json.loads(user[1])
+            if user['username'] == username or user['username'].startswith(username):
+                if user['settings']['hide_phone_number']:del user['phone']
+
+                finded_users.append(user)
+
+        return {"status": "OK", "users": finded_users}
+
     # def add_group_message(self, from_user, group_name, message, timestamp=None, message_id=None):
     #     return self.group_manager.add_group_message(from_user, group_name, message, timestamp, message_id)
 
@@ -491,9 +503,9 @@ class GroupManager:
 
         self.create_table()
 
-    def save_groups(self, file_path):
-        with codecs.open(file_path, 'w', encoding='utf-8') as file:
-            json.dump(self.groups, file, ensure_ascii=False, indent=4)
+    # def save_groups(self, file_path):
+    #     with codecs.open(file_path, 'w', encoding='utf-8') as file:
+    #         json.dump(self.groups, file, ensure_ascii=False, indent=4)
 
     def create_group_id(self) -> str:
         return f"-{str(random.randint(1000000000, 9999999999999))}"
@@ -504,7 +516,7 @@ class GroupManager:
     def create_message_id(self) -> str:
         return str(random.randint(100000000, 9999999999999))
 
-    def add_group(
+    def addGroup(
             self,
             auth_token: str,
             group_title: str,
@@ -538,8 +550,10 @@ class GroupManager:
                     "group_profile": group_profile if not group_profile is None else self.default_group_profile,
                     "created_at": time.ctime(time.time()),
                     "owner": verify['user']['username'],
+                    "admins": [verify['user']['username']],
+                    "members": [verify['user']['username']],
                     "messages": [],
-                    "last_message": {}
+                    "last_message": {},
                 }
 
                 self.group_conn.execute("INSERT INTO groups (group_id, group_data) VALUES (?, ?)", (gid, json.dumps(group_data)))
@@ -574,15 +588,15 @@ class GroupManager:
             
         return {"status": "INVALID_ID", "group": {}}
 
-    def load_message_id_counter(self):
-        if os.path.exists('data/message_id_counter.json'):
-            with codecs.open('data/message_id_counter.json', 'r', encoding='utf-8') as file:
-                return json.load(file)
-        return 1
+    # def load_message_id_counter(self):
+    #     if os.path.exists('data/message_id_counter.json'):
+    #         with codecs.open('data/message_id_counter.json', 'r', encoding='utf-8') as file:
+    #             return json.load(file)
+    #     return 1
 
-    def save_message_id_counter(self):
-        with codecs.open('data/message_id_counter.json', 'w', encoding='utf-8') as file:
-            json.dump(self.message_id_counter, file, ensure_ascii=False, indent=4)
+    # def save_message_id_counter(self):
+    #     with codecs.open('data/message_id_counter.json', 'w', encoding='utf-8') as file:
+    #         json.dump(self.message_id_counter, file, ensure_ascii=False, indent=4)
 
     def getAnyMessages(self) -> list:
         groups = self.getGroups()
@@ -605,15 +619,15 @@ class GroupManager:
         
         return {"status": "UNREACHABLE_MESSAGE_ID", "message": {}}
 
-    def add_group_message(
+    def addGroupMessage(
             self,
-            from_user: str,
+            from_auth: str,
             gid: str,
             message: str,
             timestamp: str = None,
             reply_data: dict = None
     ):
-        verify_user = self.user_manager.getUserByUName(from_user)
+        verify_user = self.user_manager.getUserByAuth(from_auth)
         verify_group = self.getGroupByGID(gid)
 
         timestamp = timestamp if not timestamp is None else time.strftime("%H:%M")
@@ -622,7 +636,7 @@ class GroupManager:
         if verify_user['status'] == "OK":
             if verify_group['status'] == "OK":
                 message_data = {
-                    "from_user": from_user,
+                    "from_user": from_auth['user']['username'],
                     "gid": gid,
                     "group_title": verify_group['group']['group_title'],
                     "group_id": verify_group['group']['group_id'],
@@ -702,60 +716,173 @@ class GroupManager:
 
     #     self.save_groups('data/groups.json')
 
-    def add_member_to_group(self, group_name, username):
-        if group_name in self.groups:
-            if username not in self.groups[group_name]["members"]:
-                self.groups[group_name]["members"].append(username)
-                self.save_groups('data/groups.json')
-                return {'status': 'OK'}
-            else:
-                return {'status': 'USER_ALREADY_MEMBER'}
-        else:
-            return {'status': 'GROUP_NOT_FOUND'}
+    def searchGroup(self, group_id: str):
+        groups = self.getGroups()
+        finded_groups = []
+
+        for group in groups:
+            group = json.loads(group[1])['group']
+            if group['group_id'] == group_id or group['group_id'].startswith(group_id):
+                finded_groups.append(group)
+            
+        return {"status": "OK", "groups": finded_groups}
+    
+    def addAdmin(self, auth_token: str, member_id: str, group_id: str):
+        owner_veri = self.user_manager.getUserByAuth(auth_token)
+        membr_veri = self.user_manager.getUserByUName(member_id)
+        group_veri = self.getGroupByID(group_id)
+
+        if owner_veri['status'] == "OK":
+            if membr_veri['status'] == "OK":
+                if group_veri['status'] == "OK":
+                    if owner_veri['user']['username'] == group_veri['group']['owner']:
+                        if member_id in group_veri['group']['members']:
+                            group_veri['group']['admins'].append(member_id)
+                            self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(group_veri),group_veri['group']['gid']))
+                            self.group_conn.commit()
+                            return {"status": "OK", "admins": group_veri['group']['admins']}
+                        else:return {"status": "MEMBER_NOT_FOUND"}
+                    else:return {"status": "OWNER_NOT_FOUND"}
+                else:return {"status": "INVALID_GROUP_ID"}
+            else:return {"status": "USER_NOT_FOUND"}
+        else:return {"status": "USER_NOT_FOUND"}
+
+    def removeAdmin(self, auth_token: str, admin_id: str, group_id: str):
+        owner_veri = self.user_manager.getUserByAuth(auth_token)
+        membr_veri = self.user_manager.getUserByUName(admin_id)
+        group_veri = self.getGroupByID(group_id)
+
+        if owner_veri['status'] == "OK":
+            if membr_veri['status'] == "OK":
+                if group_veri['status'] == "OK":
+                    if owner_veri['user']['username'] == group_veri['group']['owner']:
+                        if admin_id in group_veri['group']['members']:
+                            if admin_id in group_veri['group']['admins']:
+                                group_veri['group']['admins'].remove(admin_id)
+                                self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(group_veri),group_veri['group']['gid']))
+                                self.group_conn.commit()
+                                return {"status": "OK", "admins": group_veri['group']['admins']}
+                            else:return {"status": "MEMBER_IS_NOT_ADMIN"}
+                        else:return {"status": "MEMBER_NOT_FOUND"}
+                    else:return {"status": "OWNER_NOT_FOUND"}
+                else:return {"status": "INVALID_GROUP_ID"}
+            else:return {"status": "USER_NOT_FOUND"}
+        else:return {"status": "USER_NOT_FOUND"}
+
+    # def add_member_to_group(self, group_id, username):
+    #     verify = self.user_manager.getUserByUName(username)
+    #     verify_group = self.getGroupByID()
+    #     if not verify['status'] == "OK":
+    #         return {"status": "INVALID_USERNAME", "added": False}
         
-    def get_members_group(self, group_name, username, token):
-        if self.user_manager.authenticate_user(username=username, auth_token=token).get('status') not in ['TOKEN_INVALID', 'NOT_FOUND']:
-            if group_name in self.groups:
-                if username not in self.groups[group_name]["members"]:
-                    return {'status': 'ERROR_YOU_NOT_JOIN'}
-                else:
-                    members = self.groups[group_name]["members"]
-                    member_info = []
+    #     if group_name in self.groups:
+    #         if username not in self.groups[group_name]["members"]:
+    #             self.groups[group_name]["members"].append(username)
+    #             self.save_groups('data/groups.json')
+    #             return {'status': 'OK'}
+    #         else:
+    #             return {'status': 'USER_ALREADY_MEMBER'}
+    #     else:
+    #         return {'status': 'GROUP_NOT_FOUND'}
 
-                    for member in members:
-                        user_info = self.user_manager.getUsernameByID(username, token, member) 
-                        if user_info['status'] == 'OK':
-                            member_info.append({
-                                'username': member,
-                                'fullname': user_info['user']['fullname'],
-                                'profile': user_info['user']['profile'],
-                                'status': user_info['user']['status']
-                            })
+    def addMemberToGroup(self, auth_token: str, group_id: str, username: str):
+        v = self.user_manager.getUserByAuth(auth_token)
+        verify_user = self.user_manager.getUserByUName(username)
+        verify_group = self.getGroupByID(group_id)
 
-                    return {'status': 'OK', 'members': member_info}
-            else:
-                return {'status': 'GROUP_NOT_FOUND'}
-        else: return {'status': 'TOKEN_USERNAME_INVAILD'}
+        if v['status'] == "OK":
+            if verify_user['status'] == "OK":
+                if verify_group['status'] == "OK":
+                    if verify_user['user']['can_join_groups']:
+                        verify_group['group']['members'].append(username)
+                        self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group), verify_group['group']['gid']))
+                        self.group_conn.commit()
+                        return {"status": "OK", "members": verify_group['group']['members']}
+                    else:return {"statis": "UNAVAILABLE_ACTION", "members": verify_group['group']['members']}
+                else:return {"status": "INVALID_GROUP_ID"}
+            else:return {"status": "INVALID_USERNAME"}
+        else:return {"status": "INVALID_TOKEN"}
 
-    def remove_member_from_group(self, group_name, username):
-        if group_name in self.groups:
-            if username in self.groups[group_name]["members"]:
-                self.groups[group_name]["members"].remove(username)
-                self.save_groups('data/groups.json')
-                return {'status': 'OK'}
-            else:
-                return {'status': 'USER_NOT_FOUND'}
-        else:
-            return {'status': 'GROUP_NOT_FOUND'}
+    def getGroupMembersByID(self, auth_token: str,group_id: str) -> dict:
+        verify_group = self.getGroupByID(group_id)
+        v = self.user_manager.getUserByAuth(auth_token)
 
-    def get_all_groups(self):
-        return self.groups
+        if v['status'] == "OK":
 
-    def get_group_messages(self, group_name):
-        if group_name in self.groups:
-            return self.groups[group_name]["message"]
-        else:
-            return {}
+            if verify_group['status'] == "OK":
+                return {"status": "OK", "members": verify_group['group']['members']}
+            else:return {"status": "INVALID_GROUP_ID", "members": []}
+        else:return {'status': "INVALID_TOKEN"}
+
+    def getGroupMembersByGID(self, auth_token: str,gid: str) -> dict:
+        v = self.user_manager.getUserByAuth(auth_token)
+        verify_group = self.getGroupByGID(gid)
+
+        if v['status'] == "OK":
+
+            if verify_group['status'] == "OK":
+                return {"status": "OK", "members": verify_group['group']['members']}
+            else:return {"status": "INVALID_GID", "members": []}
+        
+        else:return {"status": "INVALID_TOKEN"}
+
+    # def get_members_group(self, group_name, username, token):
+    #     if self.user_manager.authenticate_user(username=username, auth_token=token).get('status') not in ['TOKEN_INVALID', 'NOT_FOUND']:
+    #         if group_name in self.groups:
+    #             if username not in self.groups[group_name]["members"]:
+    #                 return {'status': 'ERROR_YOU_NOT_JOIN'}
+    #             else:
+    #                 members = self.groups[group_name]["members"]
+    #                 member_info = []
+
+    #                 for member in members:
+    #                     user_info = self.user_manager.getUsernameByID(username, token, member) 
+    #                     if user_info['status'] == 'OK':
+    #                         member_info.append({
+    #                             'username': member,
+    #                             'fullname': user_info['user']['fullname'],
+    #                             'profile': user_info['user']['profile'],
+    #                             'status': user_info['user']['status']
+    #                         })
+
+    #                 return {'status': 'OK', 'members': member_info}
+    #         else:
+    #             return {'status': 'GROUP_NOT_FOUND'}
+    #     else: return {'status': 'TOKEN_USERNAME_INVAILD'}
+
+    # def remove_member_from_group(self, group_name, username):
+    #     if group_name in self.groups:
+    #         if username in self.groups[group_name]["members"]:
+    #             self.groups[group_name]["members"].remove(username)
+    #             self.save_groups('data/groups.json')
+    #             return {'status': 'OK'}
+    #         else:
+    #             return {'status': 'USER_NOT_FOUND'}
+    #     else:
+    #         return {'status': 'GROUP_NOT_FOUND'}
+
+    def removeMemberFromGroup(self, auth_token: str, member_id: str, group_id: str):
+        v = self.user_manager.getUserByAuth(auth_token)
+        vm = self.user_manager.getUserByUName(member_id)
+        vg = self.getGroupByID(group_id)
+
+        if v['status'] == "OK":
+            if vm['status'] == "OK":
+                if vg['status'] == "OK":
+                    if member_id in vg['group']['members']:
+                        vg['group']['members'].remove(member_id)
+                        self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(vg), vg['group']['gid']))
+                        self.group_conn.commit()
+                    else:return {"status": "MEMBER_NOT_FOUND"}
+                else:return {"status": "INVALID_GROUP_ID"}
+            else:return {"status": "INVALID_USER"}
+        else:return {"status": "INVALID_TOKEN"}
+
+    def getGroupMessages(self, group_id: str):
+        verify = self.getGroupByID(group_id)
+
+        if verify['status'] == "OK":return {"status": "OK", "messages": verify['group']['messages'], "last_message": verify['group']['last_message']}
+        else:return {"status": "INVALID_GROUP_ID", "messages": [], "last_message": {}}
 
 # print(UserManager().add_user("ali", "+9843278432", "Someone"))
 # print(UserManager().getUsers())
@@ -770,7 +897,8 @@ class GroupManager:
 
 #data = GroupManager(UserManager()).getGroups()[0][1]
 #data = GroupManager(UserManager()).add_group_message("ali", "-151118535365", "Hello World 2", reply_data={"from_user": "ali", "timestamp": "324", "message_id": "4325", "message": "XASF"})
-data = GroupManager(UserManager()).getMessageByID("1715726007358")
+#data = GroupManager(UserManager()).searchGroup("z")
+data = UserManager().searchUser("a")
 print(data)
 
 """
