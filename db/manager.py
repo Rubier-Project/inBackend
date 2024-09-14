@@ -295,9 +295,12 @@ class ChatManager:
         self.messages = self.load_messages('data/private_messages.json')
         self.message_id_counter = self.load_message_id_counter()
 
-        # self.messages = sqlite3.connect("data/private_messages.db", check_same_thread=False)
+        self.msg_conn = sqlite3.connect("data/private_messages.db", check_same_thread=False)
         # self.message_id_counter = sqlite3.connect("data/message_id_counter.db", check_same_thread=False)
 
+    
+    def create_table(self):
+        self.msg_conn.execute("CREATE TABLE IF NOT EXISTS private_messages (  )")
 
     def increment_unread_message_count(self, to_user, from_user):
         users_list = self.messages[to_user]["listPrivate"]["userslist"]
@@ -499,8 +502,6 @@ class GroupManager:
         #self.groups = self.load_groups('data/groups.json')
         self.group_conn = sqlite3.connect("data/groups.db", check_same_thread=False)
         self.default_group_profile = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRGqisajcuqgEBg05gUKz5MX3k6CFQoXThhde0LECDOocysVuSAFFh5hECH4cLVyCpM7pM&usqp=CAU"
-        self.message_id_counter = self.load_message_id_counter()
-
         self.create_table()
 
     # def save_groups(self, file_path):
@@ -573,7 +574,6 @@ class GroupManager:
         for group in groups:
             group = json.loads(group[1])
             if group['group_id'] == group_id:
-                del group['owner']
                 return {"status": "OK", "group": group}
             
         return {"status": "INVALID_ID", "group": {}}
@@ -582,7 +582,7 @@ class GroupManager:
         groups = self.getGroups()
 
         for group in groups:
-            group = json.loads(group[1])['group']
+            group = json.loads(group[1])
             if group['gid'] == gid:
                 return {"status": "OK", "group": group}
             
@@ -603,7 +603,7 @@ class GroupManager:
         messages = []
 
         for group in groups:
-            group = json.loads(group[1])['group']
+            group = json.loads(group[1])
 
             for message in group['messages']:
                 messages.append({message['message_id']: message})
@@ -636,7 +636,7 @@ class GroupManager:
         if verify_user['status'] == "OK":
             if verify_group['status'] == "OK":
                 message_data = {
-                    "from_user": from_auth['user']['username'],
+                    "from_user": verify_user['user']['username'],
                     "gid": gid,
                     "group_title": verify_group['group']['group_title'],
                     "group_id": verify_group['group']['group_id'],
@@ -656,7 +656,7 @@ class GroupManager:
                 verify_group['group']['messages'].append(message_data)
                 verify_group['group']['last_message'] = message_data
 
-                self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group), gid))
+                self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), gid))
                 self.group_conn.commit()
 
                 return {"status": "OK", "message": message_data}
@@ -737,10 +737,12 @@ class GroupManager:
                 if group_veri['status'] == "OK":
                     if owner_veri['user']['username'] == group_veri['group']['owner']:
                         if member_id in group_veri['group']['members']:
-                            group_veri['group']['admins'].append(member_id)
-                            self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(group_veri),group_veri['group']['gid']))
-                            self.group_conn.commit()
-                            return {"status": "OK", "admins": group_veri['group']['admins']}
+                            if not member_id in group_veri['group']['admins']:
+                                group_veri['group']['admins'].append(member_id)
+                                self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(group_veri['group']),group_veri['group']['gid']))
+                                self.group_conn.commit()
+                                return {"status": "OK", "admins": group_veri['group']['admins']}
+                            else:return {"status": "ADMINS_EXISTS"}
                         else:return {"status": "MEMBER_NOT_FOUND"}
                     else:return {"status": "OWNER_NOT_FOUND"}
                 else:return {"status": "INVALID_GROUP_ID"}
@@ -759,7 +761,7 @@ class GroupManager:
                         if admin_id in group_veri['group']['members']:
                             if admin_id in group_veri['group']['admins']:
                                 group_veri['group']['admins'].remove(admin_id)
-                                self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(group_veri),group_veri['group']['gid']))
+                                self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(group_veri['group']),group_veri['group']['gid']))
                                 self.group_conn.commit()
                                 return {"status": "OK", "admins": group_veri['group']['admins']}
                             else:return {"status": "MEMBER_IS_NOT_ADMIN"}
@@ -793,17 +795,19 @@ class GroupManager:
         if v['status'] == "OK":
             if verify_user['status'] == "OK":
                 if verify_group['status'] == "OK":
-                    if verify_user['user']['can_join_groups']:
-                        verify_group['group']['members'].append(username)
-                        self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group), verify_group['group']['gid']))
-                        self.group_conn.commit()
-                        return {"status": "OK", "members": verify_group['group']['members']}
+                    if verify_user['user']['settings']['can_join_groups']:
+                        if not verify_user['user']['username'] in verify_group['group']['members']:
+                            verify_group['group']['members'].append(username)
+                            self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), verify_group['group']['gid']))
+                            self.group_conn.commit()
+                            return {"status": "OK", "members": verify_group['group']['members']}
+                        else:return {"status": "EXISTS_MEMBER"}
                     else:return {"statis": "UNAVAILABLE_ACTION", "members": verify_group['group']['members']}
                 else:return {"status": "INVALID_GROUP_ID"}
             else:return {"status": "INVALID_USERNAME"}
         else:return {"status": "INVALID_TOKEN"}
 
-    def getGroupMembersByID(self, auth_token: str,group_id: str) -> dict:
+    def getGroupMembersByID(self, auth_token: str, group_id: str) -> dict:
         verify_group = self.getGroupByID(group_id)
         v = self.user_manager.getUserByAuth(auth_token)
 
@@ -870,9 +874,14 @@ class GroupManager:
             if vm['status'] == "OK":
                 if vg['status'] == "OK":
                     if member_id in vg['group']['members']:
-                        vg['group']['members'].remove(member_id)
-                        self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(vg), vg['group']['gid']))
-                        self.group_conn.commit()
+                        if not member_id == v['user']['username']:
+                            if v["user"]['username'] == vg['group']['owner']:
+                                vg['group']['members'].remove(member_id)
+                                self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(vg['group']), vg['group']['gid']))
+                                self.group_conn.commit()
+                                return {"status": "OK", "members": vg['group']['members']}
+                            else:return {"status": "TOKEN_IS_NOT_OWNER"}
+                        else:return {"status": "CANNOT_REMOVE_OWNER"}
                     else:return {"status": "MEMBER_NOT_FOUND"}
                 else:return {"status": "INVALID_GROUP_ID"}
             else:return {"status": "INVALID_USER"}
@@ -884,10 +893,16 @@ class GroupManager:
         if verify['status'] == "OK":return {"status": "OK", "messages": verify['group']['messages'], "last_message": verify['group']['last_message']}
         else:return {"status": "INVALID_GROUP_ID", "messages": [], "last_message": {}}
 
+    def getGroupAdmins(self, group_id: str):
+        verify = self.getGroupByID(group_id)
+
+        if verify['status'] == "OK":return {"status": "OK", "admins": verify['group']['admins']}
+        else:return {"status": "INVALID_GROUP_ID", "admins": []}
+
 # print(UserManager().add_user("ali", "+9843278432", "Someone"))
 # print(UserManager().getUsers())
 
-# data = GroupManager(UserManager()).add_group(
+# data = GroupManager(UserManager()).addGroup(
 #     "QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q",
 #     "دلقک بازی",
 #     None,
@@ -898,11 +913,31 @@ class GroupManager:
 #data = GroupManager(UserManager()).getGroups()[0][1]
 #data = GroupManager(UserManager()).add_group_message("ali", "-151118535365", "Hello World 2", reply_data={"from_user": "ali", "timestamp": "324", "message_id": "4325", "message": "XASF"})
 #data = GroupManager(UserManager()).searchGroup("z")
-data = UserManager().searchUser("a")
-print(data)
+#data = UserManager().searchUser("a")
+#data = GroupManager(UserManager()).getGroupByGID("-269181497584")
+#data = GroupManager(UserManager()).addMemberToGroup("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "ReDalz", "jafar")
+#data = GroupManager(UserManager()).removeMemberFromGroup("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "jafar", "ReDalz")
+# print(data)
+# data = GroupManager(UserManager()).getGroupAdmins("ReDalz")
+#data = GroupManager(UserManager()).addGroupMessage("D7ejdNC0IjTSFvtdLZsgObi_nCSIqwwIl4GYg8Jh21U", "-321822164767", "Hello WOrld From JAfar")
+#print(data, "\n")
+#data = GroupManager(UserManager()).getAnyMessages()#("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "jafar", "ReDalz")
+# data = GroupManager(UserManager()).getGroupMembersByGID("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "-321822164767")
+#print(data)
 
 """
-{'status': 'OK', 'group': {'group_title': 'دلقک بازی', 'group_caption': 'Someone is Dalghak', 'group_id': 'ReDalz', 'gid': '-151118535365',
+{'status': 'OK', 'group': {'group_title': 'دلقک بازی', 'group_caption': 'Someone is Dalghak', 'group_id': 'ReDalz', 'gid': '-321822164767',
 'group_profile': 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRGqisajcuqgEBg05gUKz5MX3k6CFQoXThhde0LECDOocysVuSAFFh5hECH4cLVyCpM7p
-M&usqp=CAU', 'created_at': 'Sat Sep 14 22:36:24 2024', 'owner': 'ali', 'messages': [], 'last_message': {}}}
+M&usqp=CAU', 'created_at': 'Sun Sep 15 00:04:50 2024', 'owner': 'ali', 'admins': ['ali'], 'members': ['ali'], 'messages': [], 'last_message'
+: {}}}
+
+
+[('715607608', '{"phone": "043278432", "username": "ali", "fullname": "Someone", "bio": "", "profile": "https://encrypted-tbn0.gstatic.com/i
+mages?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&", "token": "QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "user_id": "715607608", "s
+tatus": "online", "point": "user", "settings": {"hide_phone_number": true, "can_join_groups": true, "can_see_profiles": true, "inner_gif": n
+ull}}'), ('7844191996', '{"phone": "036574353", "username": "jafar", "fullname": "jafar mamady", "bio": "life was gone wrong", "profile": "h
+ttps://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&", "token": "D7ejdNC0IjTSFvtdLZsgObi_nCSIqwwIl4GYg
+8Jh21U", "user_id": "7844191996", "status": "online", "point": "user", "settings": {"hide_phone_number": true, "can_join_groups": true, "inn
+er_gif": null}}')]
+
 """

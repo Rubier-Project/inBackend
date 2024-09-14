@@ -5,5 +5,12 @@
             "userslist": [],
             "message": {}
         }
+    },
+    "jafar": {
+        "joinGroup": [],
+        "listPrivate": {
+            "userslist": [],
+            "message": {}
+        }
     }
 }
