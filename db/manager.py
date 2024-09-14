@@ -555,6 +555,8 @@ class GroupManager:
                     "members": [verify['user']['username']],
                     "messages": [],
                     "last_message": {},
+                    "pinned_message": {},
+                    "allow_to_send_messages": True
                 }
 
                 self.group_conn.execute("INSERT INTO groups (group_id, group_data) VALUES (?, ?)", (gid, json.dumps(group_data)))
@@ -635,31 +637,63 @@ class GroupManager:
 
         if verify_user['status'] == "OK":
             if verify_group['status'] == "OK":
-                message_data = {
-                    "from_user": verify_user['user']['username'],
-                    "gid": gid,
-                    "group_title": verify_group['group']['group_title'],
-                    "group_id": verify_group['group']['group_id'],
-                    "message": message,
-                    "timestamp": timestamp,
-                    "message_id": self.create_message_id()
-                }
+                if not verify_user['user']['username'] in verify_group['group']['admins']:
+                    if verify_group['group']['allow_to_send_messages']:
+                        message_data = {
+                            "from_user": verify_user['user']['username'],
+                            "gid": gid,
+                            "group_title": verify_group['group']['group_title'],
+                            "group_id": verify_group['group']['group_id'],
+                            "message": message,
+                            "timestamp": timestamp,
+                            "message_id": self.create_message_id()
+                        }
 
-                if not reply_data is None:
-                    message_data['reply_to_message'] = {}
-                    message_data['reply_to_message']['from_user'] = reply_data.get("from_user", "").strip()
-                    message_data['reply_to_message']['message_id'] = reply_data.get("message_id", "").strip()
-                    message_data['reply_to_message']['message'] = reply_data.get("message", "").strip()
-                    message_data['reply_to_message']['timestamp'] = reply_data.get("timestamp", "").strip()
-                else:message_data['reply_to_message'] = {}
+                        if not reply_data is None:
+                            message_data['reply_to_message'] = {}
+                            message_data['reply_to_message']['from_user'] = reply_data.get("from_user", "").strip()
+                            message_data['reply_to_message']['message_id'] = reply_data.get("message_id", "").strip()
+                            message_data['reply_to_message']['message'] = reply_data.get("message", "").strip()
+                            message_data['reply_to_message']['timestamp'] = reply_data.get("timestamp", "").strip()
+                        else:message_data['reply_to_message'] = {}
 
-                verify_group['group']['messages'].append(message_data)
-                verify_group['group']['last_message'] = message_data
+                        verify_group['group']['messages'].append(message_data)
+                        verify_group['group']['last_message'] = message_data
 
-                self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), gid))
-                self.group_conn.commit()
+                        self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), gid))
+                        self.group_conn.commit()
 
-                return {"status": "OK", "message": message_data}
+                        return {"status": "OK", "message": message_data}
+                    
+                    else:return {"status": "JUST_ADMINS_ACCESSED", "message": {}}
+
+                else:
+                    message_data = {
+                        "from_user": verify_user['user']['username'],
+                        "gid": gid,
+                        "group_title": verify_group['group']['group_title'],
+                        "group_id": verify_group['group']['group_id'],
+                        "message": message,
+                        "timestamp": timestamp,
+                        "message_id": self.create_message_id()
+                    }
+
+                    if not reply_data is None:
+                        message_data['reply_to_message'] = {}
+                        message_data['reply_to_message']['from_user'] = reply_data.get("from_user", "").strip()
+                        message_data['reply_to_message']['message_id'] = reply_data.get("message_id", "").strip()
+                        message_data['reply_to_message']['message'] = reply_data.get("message", "").strip()
+                        message_data['reply_to_message']['timestamp'] = reply_data.get("timestamp", "").strip()
+                    else:message_data['reply_to_message'] = {}
+
+                    verify_group['group']['messages'].append(message_data)
+                    verify_group['group']['last_message'] = message_data
+
+                    self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), gid))
+                    self.group_conn.commit()
+
+                    return {"status": "OK", "message": message_data}
+                
             else:return {"status": "INVALID_GID", "message": {}}
         else:return {"status": "NOT_FOUND", "message": {}} 
 
@@ -887,6 +921,39 @@ class GroupManager:
             else:return {"status": "INVALID_USER"}
         else:return {"status": "INVALID_TOKEN"}
 
+    def pinMessage(self, auth_token: str, message_id: str, group_id: str):
+        verify_user = self.user_manager.getUserByAuth(auth_token)
+        verify_group = self.getGroupByID(group_id)
+        verify_message = self.getMessageByID(message_id)
+
+        if verify_user['status'] == "OK":
+            if verify_group['status'] == "OK":
+                if verify_message['status'] == "OK":
+                    if verify_user['user']['username'] in verify_group['group']['admins']:
+                        verify_group['group']['pinned_message'] = verify_message['message'][message_id]
+                        self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), verify_group['group']['gid']))
+                        self.group_conn.commit()
+                        return {"status": "OK", "message": verify_message["message"][message_id]}
+                    else:return {"status": "ACCESS_DENIED"}
+                else:return {"status": "UNREACHABLE_MESSAGE_ID"}
+            else:return {"status": "INVALID_GROUP_ID"}
+        else:return {"status": "INVALID_TOKEN"}
+
+    def clearPin(self, auth_token: str, group_id: str):
+        verify_user = self.user_manager.getUserByAuth(auth_token)
+        verify_group = self.getGroupByID(group_id)
+
+        if verify_user['status'] == "OK":
+            if verify_group['status'] == "OK":
+                if verify_user['user']['username'] in verify_group['group']['admins']:
+                    verify_group['group']['pinned_message'] = {}
+                    self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), verify_group['group']['gid']))
+                    self.group_conn.commit()
+                    return {"status": "OK"}
+                else:return {"status": "ACCESS_DENIED"}
+            else:return {"status": "INVALID_GROUP_ID"}
+        else:return {"status": "INVALID_TOKEN"}
+
     def getGroupMessages(self, group_id: str):
         verify = self.getGroupByID(group_id)
 
@@ -922,8 +989,8 @@ class GroupManager:
 #data = GroupManager(UserManager()).addGroupMessage("D7ejdNC0IjTSFvtdLZsgObi_nCSIqwwIl4GYg8Jh21U", "-321822164767", "Hello WOrld From JAfar")
 #print(data, "\n")
 #data = GroupManager(UserManager()).getAnyMessages()#("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "jafar", "ReDalz")
-# data = GroupManager(UserManager()).getGroupMembersByGID("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "-321822164767")
-#print(data)
+data = GroupManager(UserManager()).getMessageByID("3162977272920")#("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "-321822164767", "something message")
+print(data)
 
 """
 {'status': 'OK', 'group': {'group_title': 'دلقک بازی', 'group_caption': 'Someone is Dalghak', 'group_id': 'ReDalz', 'gid': '-321822164767',
