@@ -332,7 +332,6 @@ class ChatManager:
                     "seen_message": 0
                 }
 
-                user_data['total_messages'] = len(user_data['messages'])
                 self.msg_conn.execute("INSERT INTO private_messages (chat_uname, chat_data) VALUES (?, ?)", (from_user, json.dumps(user_data)))
                 self.msg_conn.commit()
             else:return {"status": verify_from_user['status']}
@@ -459,12 +458,13 @@ class ChatManager:
             msg_index = messages.index(message['message'])
             messages[msg_index]['is_seen'] = True
             messages.insert(msg_index, messages[msg_index])
+            chat['chat']['seen_message'] = chat['chat']['seen_message'] - 1 if chat['chat']['seen_message'] > 0 else 0
             self.msg_conn.execute("UPDATE private_messages SET chat_data = ? WHERE chat_uname = ?", (json.dumps(chat['chat']), message['message']['from_user']))
             self.msg_conn.commit()
-            msgs = []
 
             return {"status": "OK", "message": messages[msg_index]}
         else:return{"status": message['status']}
+
 
 class GroupManager:
     def __init__(self, user_manager: UserManager):
@@ -911,6 +911,13 @@ class GroupManager:
             return {"status": "OK", "groups": injoined_groups}
         else:return {"status": verify_user['status']}
 
+    # def leaveGroup(
+    #         self,
+    #         auth_token: str,
+    #         group_id: str
+    # ):
+    #     verify_user = self.user_manager.getUserByAuth(auth_token)
+
 # print(UserManager().add_user("ali", "+9843278432", "Someone"))
 # print(UserManager().getUsers())
 
@@ -937,9 +944,13 @@ class GroupManager:
 #data = GroupManager(UserManager()).editMessage("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q",#  "ReDalz", "1719710220991", "Hix")#.getMessageByID("3162977272920")#("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "-321822164767", "something message")
 
 #data = ChatManager(UserManager()).addPrivateMessage("D7ejdNC0IjTSFvtdLZsgObi_nCSIqwwIl4GYg8Jh21U", "jafar", "Hello Jafar")
-#data = ChatManager(UserManager()).addPrivateMessage("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "jafar", "Nice to meet you Jafar 2")
-#data = ChatManager(UserManager()).markMessagesByMessageId("6917256662254")
-#print(data)
+#data = ChatManager(UserManager()).addPrivateMessage("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "jafar", "Pedaret Bemire Jafar")
+#data = ChatManager(UserManager()).getChats()
+#data = ChatManager(UserManager()).getAnyMessages()
+#import rich
+#data = ChatManager(UserManager()).getChatByUName("ali")
+#data = ChatManager(UserManager()).markMessagesByMessageId("2851711857015")
+#rich.print(data)
 
 """
 {'status': 'OK', 'group': {'group_title': 'دلقک بازی', 'group_caption': 'Someone is Dalghak', 'group_id': 'ReDalz', 'gid': '-321822164767',
@@ -955,5 +966,17 @@ ull}}'), ('7844191996', '{"phone": "036574353", "username": "jafar", "fullname":
 ttps://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&", "token": "D7ejdNC0IjTSFvtdLZsgObi_nCSIqwwIl4GYg
 8Jh21U", "user_id": "7844191996", "status": "online", "point": "user", "settings": {"hide_phone_number": true, "can_join_groups": true, "inn
 er_gif": null}}')]
+
+[('ali', '{"from_user": "ali", "from_user_token": "QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "messages": [{"from_user": "ali", "to_user": "jafar",
+ "message": "Nice to meet you Jafar", "timestamp": "22:36", "message_id": "9065585379845", "is_seen": false, "is_edit": false, "reply_to_message": {}}
+, {"from_user": "ali", "to_user": "jafar", "message": "Nice to meet you Jafar 2", "timestamp": "22:37", "message_id": "6917256662254", "is_seen": true
+, "is_edit": false, "reply_to_message": {}}], "last_message": {"from_user": "ali", "to_user": "jafar", "message": "Nice to meet you Jafar 2", "timesta
+mp": "22:37", "message_id": "6917256662254", "is_seen": false, "is_edit": false, "reply_to_message": {}}, "seen_message": 2, "total_messages": 0}'), (
+'jafar', '{"from_user": "jafar", "from_user_token": "D7ejdNC0IjTSFvtdLZsgObi_nCSIqwwIl4GYg8Jh21U", "messages": [{"from_user": "ali", "to_user": "jafar
+", "message": "Nice to meet you Jafar", "timestamp": "22:36", "message_id": "9065585379845", "is_seen": false, "is_edit": false, "reply_to_message": {
+}}, {"from_user": "ali", "to_user": "jafar", "message": "Nice to meet you Jafar 2", "timestamp": "22:37", "message_id": "6917256662254", "is_seen": fa
+lse, "is_edit": false, "reply_to_message": {}}], "last_message": {"from_user": "ali", "to_user": "jafar", "message": "Nice to meet you Jafar 2", "time
+stamp": "22:37", "message_id": "6917256662254", "is_seen": false, "is_edit": false, "reply_to_message": {}}, "seen_message": 2, "total_messages": 0}')
+]
 
 """
