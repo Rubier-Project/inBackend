@@ -47,6 +47,7 @@ class Handler:
                 can_join_groups=data.get("can_join_groups"),
                 can_see_profiles=data.get("can_see_profiles")
             )
+    
     def register(self, username: str, phone_number: str, fullname: str, profile=None):
         default_profile = 'https://www.google.com/url?sa=i&url=https%3A%2F%2Fstock.adobe.com%2Fimages%2Fdefault-avatar-profile-flat-icon-social-media-user-vector-portrait-of-unknown-a-human-image%2F353110097&psig=AOvVaw3CkGCCeJAqiqKqgZ_mMS0G&ust=1722945658368000&source=images&cd=vfe&opi=89978449&ved=0CBEQjRxqFwoTCNie4Ojm3YcDFQAAAAAdAAAAABAK'
     
