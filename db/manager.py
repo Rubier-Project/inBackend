@@ -315,6 +315,16 @@ class ChatManager:
         
         return {"status": "INVALID_CHAT_ID", "chat": {}}
     
+    def getChatByID(self, chat_id: str):
+        chats = self.getChats()
+
+        for chat in chats:
+            chat = json.loads(chat[1])
+            if chat['chat_id'] == chat_id:
+                return {"status": "OK", "chat": chat}
+            
+        return {"status": "INVALID_CHAT_ID", "chat": {}}
+    
     def addChat(
             self,
             from_user: str
@@ -329,13 +339,15 @@ class ChatManager:
                     "from_user_token": verify_from_user['user']['token'],
                     "messages": [],
                     "last_message": {},
-                    "seen_message": 0
+                    "seen_message": 0,
+                    "chat_id": self.create_chat_id()
                 }
 
                 self.msg_conn.execute("INSERT INTO private_messages (chat_uname, chat_data) VALUES (?, ?)", (from_user, json.dumps(user_data)))
                 self.msg_conn.commit()
+                return {"status": "OK", "chat": user_data}
             else:return {"status": verify_from_user['status']}
-        return {"status": "OK"}
+        else:return {"status": "EXISTS_CHAT"}
     
     def addPrivateMessage(
             self,
@@ -453,18 +465,43 @@ class ChatManager:
         message = self.getMessageByID(message_id)
 
         if message['status'] == "OK":
-            chat = self.getChatByUName(message['message']['from_user'])
-            messages = list(chat['chat']['messages'])
-            msg_index = messages.index(message['message'])
-            messages[msg_index]['is_seen'] = True
-            messages.insert(msg_index, messages[msg_index])
-            chat['chat']['seen_message'] = chat['chat']['seen_message'] - 1 if chat['chat']['seen_message'] > 0 else 0
-            self.msg_conn.execute("UPDATE private_messages SET chat_data = ? WHERE chat_uname = ?", (json.dumps(chat['chat']), message['message']['from_user']))
-            self.msg_conn.commit()
+            from_user = message['message']['from_user']
+            to_user = message['message']['to_user']
 
-            return {"status": "OK", "message": messages[msg_index]}
+            from_chat = self.getChatByUName(from_user)
+            to_chat = self.getChatByUName(to_user)
+
+            print(from_chat['chat']['messages'].index(message['message']))
+            print(to_chat['chat']['messages'].index(message['message']))
+
+            return {"from": from_chat, "to": to_chat}
+            # chat = self.getChatByUName(message['message']['from_user'])
+            # to_chat = self.getChatByUName(chat['chat']['from_user'])
+
+            # messages = list(chat['chat']['messages'])
+            # msg_index = messages.index(message['message'])
+            # messages[msg_index]['is_seen'] = True
+            # messages.insert(msg_index, messages[msg_index])
+            # chat['chat']['seen_message'] = chat['chat']['seen_message'] - 1 if chat['chat']['seen_message'] > 0 else 0
+            # chat['last_message'] = chat['chat']['messages'][-1]
+
+            # print(chat['last_message'])
+
+            # messages = list(to_chat['chat']['messages'])
+            # msg_index = messages.index(message['message'])
+            # messages[msg_index]['is_seen'] = True
+            # messages.insert(msg_index, messages[msg_index])
+            # to_chat['chat']['seen_message'] = to_chat['chat']['seen_message'] - 1 if to_chat['chat']['seen_message'] > 0 else 0
+            # to_chat['last_message'] = to_chat['chat']['messages'][-1]
+
+            # self.msg_conn.cursor().execute("UPDATE private_messages SET chat_data = ? WHERE chat_uname = ?", (json.dumps(chat['chat']), message['message']['from_user']))
+            # self.msg_conn.cursor().execute("UPDATE private_messages SET chat_data = ? WHERE chat_uname = ?", (json.dumps(to_chat['chat']), to_chat['chat']['from_user']))
+            # self.msg_conn.commit()
+
+            # return {"status": "OK", "message": messages[msg_index]}
         else:return{"status": message['status']}
 
+    #def editMessage(self, auth_token: str, message_id: str, new_message: str)
 
 class GroupManager:
     def __init__(self, user_manager: UserManager):
@@ -515,9 +552,9 @@ class GroupManager:
                     "gid": gid,
                     "group_profile": group_profile if not group_profile is None else self.default_group_profile,
                     "created_at": time.ctime(time.time()),
-                    "owner": verify['user']['username'],
-                    "admins": [verify['user']['username']],
-                    "members": [verify['user']['username']],
+                    "owner": verify['user']['user_id'],
+                    "admins": [verify['user']['user_id']],
+                    "members": [verify['user']['user_id']],
                     "messages": [],
                     "last_message": {},
                     "pinned_message": {},
@@ -911,12 +948,17 @@ class GroupManager:
             return {"status": "OK", "groups": injoined_groups}
         else:return {"status": verify_user['status']}
 
-    # def leaveGroup(
-    #         self,
-    #         auth_token: str,
-    #         group_id: str
-    # ):
-    #     verify_user = self.user_manager.getUserByAuth(auth_token)
+    def leaveGroup(
+            self,
+            auth_token: str,
+            group_id: str
+    ):...
+        # verify_user = self.user_manager.getUserByAuth(auth_token)
+        # verify_group = self.getGroupByID(group_id)
+
+        # if verify_user['stauts'] == "OK":
+        #     if verify_group['status'] == "OK":
+        #         if verify_user['']
 
 # print(UserManager().add_user("ali", "+9843278432", "Someone"))
 # print(UserManager().getUsers())
@@ -947,12 +989,46 @@ class GroupManager:
 #data = ChatManager(UserManager()).addPrivateMessage("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "jafar", "Pedaret Bemire Jafar")
 #data = ChatManager(UserManager()).getChats()
 #data = ChatManager(UserManager()).getAnyMessages()
-#import rich
+import rich
 #data = ChatManager(UserManager()).getChatByUName("ali")
 #data = ChatManager(UserManager()).markMessagesByMessageId("2851711857015")
-#rich.print(data)
+#data = ChatManager(UserManager()).addPrivateMessage("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "jafar", "Hello Jafar")
+data = ChatManager(UserManager()).markMessagesByMessageId("5985075970911")
+#data = ChatManager(UserManager()).getChatByUName("ali")
+rich.print(data)
 
 """
+
+{
+    'status': 'OK',
+    'chat': {
+        'from_user': 'ali',
+        'from_user_token': 'QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q',
+        'messages': [],
+        'last_message': {},
+        'seen_message': 0,
+        'chat_id': '+901676014061'
+    }
+}
+
+[
+    (
+        '715607608',
+        '{"phone": "043278432", "username": "ali", "fullname": "Someone", "bio": "", "profile": 
+"https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&", "token": 
+"QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "user_id": "715607608", "status": "online", "point": "user", "settings": 
+{"hide_phone_number": true, "can_join_groups": true, "can_see_profiles": true, "inner_gif": null}}'
+    ),
+    (
+        '7844191996',
+        '{"phone": "036574353", "username": "jafar", "fullname": "jafar mamady", "bio": "life was gone wrong", "profile": 
+"https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&", "token": 
+"D7ejdNC0IjTSFvtdLZsgObi_nCSIqwwIl4GYg8Jh21U", "user_id": "7844191996", "status": "online", "point": "user", "settings": 
+{"hide_phone_number": true, "can_join_groups": true, "inner_gif": null}}'
+    )
+]
+
+
 {'status': 'OK', 'group': {'group_title': 'دلقک بازی', 'group_caption': 'Someone is Dalghak', 'group_id': 'ReDalz', 'gid': '-321822164767',
 'group_profile': 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRGqisajcuqgEBg05gUKz5MX3k6CFQoXThhde0LECDOocysVuSAFFh5hECH4cLVyCpM7p
 M&usqp=CAU', 'created_at': 'Sun Sep 15 00:04:50 2024', 'owner': 'ali', 'admins': ['ali'], 'members': ['ali'], 'messages': [], 'last_message'
