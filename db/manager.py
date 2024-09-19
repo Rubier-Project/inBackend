@@ -1,13 +1,11 @@
 import json
-import os
 import secrets
 import random
 import requests
 import sqlite3
 import time
-import codecs
 
-class UserManager:
+class UserManager(object):
     def __init__(self):
         self.users_dbs = 'data/users.db'
         self.user_conn = sqlite3.connect(self.users_dbs, check_same_thread=False)
@@ -15,7 +13,7 @@ class UserManager:
         self.lisence = "e765defd954e1e682c81ab4956f5df00"
         self.reflex_api = f"http://api-free.ir/api2/very?token={self.lisence}&phone="
         self.points = ["user", "admin", "dev"]
-        self.chat_manager = ChatManager(self)
+        self.private_manager = PrivateManager(self)
 
     def sendCode(self, phone: str):
         try:
@@ -85,6 +83,14 @@ class UserManager:
         
         return {"status": "UNREACHABLE_TOKEN", "user": {}}
     
+    def getUserByUserID(self, user_id: str) -> dict:
+        for user in self.getUsers():
+            user = json.loads(user[1])
+            if user['user_id'] == user_id:
+                return {"status": "OK", "user": user}
+        
+        return {"status": "UNREACHABLE_USER_ID", "user": {}}
+    
     def getAdmins(self) -> dict:
         admins = []
         for user in self.getUsers():
@@ -103,7 +109,7 @@ class UserManager:
         
         return {"status": "OK", "users": devs}
 
-    def addUser(self, username, phone, fullname, bio:str = "", profile: str = None):
+    def addUser(self, username: str, phone: str, fullname: str, bio: str = "", profile: str = None):
         default_profile = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&'
 
         if profile is None or profile.strip() == '':
@@ -120,13 +126,14 @@ class UserManager:
                 user_data  = {
                     "phone": self.trim_phone_number(phone),
                     "username": username,
-                    "fullname": fullname,
+                    "fullname": fullname.strip(),
                     "bio": bio,
                     "profile": profile,
                     "token": auth_token,
                     "user_id": user_id,
                     "status": "online",
                     "point": "user",
+                    "is_suspension": False,
                     "settings": {
                         "hide_phone_number": True,
                         "can_join_groups": True,
@@ -137,7 +144,7 @@ class UserManager:
                 self.user_conn.execute("INSERT INTO users (user_id, user_data) VALUES (?, ?)", (user_id, json.dumps(user_data)))
                 self.user_conn.commit()
 
-                self.chat_manager.addChat(username)
+                self.private_manager.addIndex(user_id)
 
                 return {
                     'status': 'OK',
@@ -151,6 +158,22 @@ class UserManager:
         else: return {
             "status": "EXISTS_PHONE"
         }
+
+    def suspensionUser(self, auth_token: str):
+        verify_user = self.getUserByAuth(auth_token)
+        ghostly = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQT6T83Gykijshi_fAb3q1piW3LJ5i0eXkK4w&s"
+
+        if verify_user['status'] == "OK":
+            verify_user['user']['is_suspension'] = True
+            verify_user['user']['fullname'] = "suspension account".title()
+            verify_user['user']['profile'] = ghostly
+
+            self.user_conn.execute("UPDATE users SET user_data WHERE user_id = ?", (json.dumps(verify_user['user']), verify_user['user']['user_id']))
+            self.user_conn.commit()
+
+            return {"status": "OK", "user": verify_user['user']}
+        else:return {"status": "INVALID_TOKEN", "user": {}}
+
 
     def update_user_profile(
             self,
@@ -275,235 +298,9 @@ class UserManager:
                 finded_users.append(user)
 
         return {"status": "OK", "users": finded_users}
-    
 
-class ChatManager:
-    def __init__(self, user_manager: UserManager):
-        self.user_manager = user_manager
-        self.msg_conn = sqlite3.connect("data/private_messages.db", check_same_thread=False)
-        self.create_table()
 
-    def create_table(self):
-        self.msg_conn.execute("CREATE TABLE IF NOT EXISTS private_messages ( chat_uname TEXT PRIMARY KEY, chat_data TEXT )")
-
-    def create_chat_id(self) -> str:
-        return f"+{str(random.randint(100000000, 999999999999))}"
-    
-    def create_message_id(self) -> str:
-        return str(random.randint(100000000, 9999999999999))
-    
-    def getChats(self) -> list:
-        chats = self.msg_conn.execute("SELECT * FROM private_messages")
-        return chats.fetchall()
-    
-    def getChatByUName(self, uname: str):
-        chats = self.getChats()
-
-        for chat in chats:
-            if chat[0] == uname:
-                return {"status": "OK", "chat": json.loads(chat[1])}
-        
-        return {"status": "INVALID_CHAT_ID", "chat": {}}
-    
-    def getChatByAuth(self, auth_token: str):
-        chats = self.getChats()
-
-        for chat in chats:
-            chat = json.loads(chat[1])
-            if chat['from_auth_token'] == auth_token:
-                return {"status": "OK", "chat": chat}
-        
-        return {"status": "INVALID_CHAT_ID", "chat": {}}
-    
-    def getChatByID(self, chat_id: str):
-        chats = self.getChats()
-
-        for chat in chats:
-            chat = json.loads(chat[1])
-            if chat['chat_id'] == chat_id:
-                return {"status": "OK", "chat": chat}
-            
-        return {"status": "INVALID_CHAT_ID", "chat": {}}
-    
-    def addChat(
-            self,
-            from_user: str
-    ):
-        verify_from = self.getChatByUName(from_user)
-        verify_from_user = self.user_manager.getUserByUName(from_user)
-
-        if not verify_from['status'] == "OK":
-            if verify_from_user['status'] == "OK":
-                user_data = {
-                    "from_user": from_user,
-                    "from_user_token": verify_from_user['user']['token'],
-                    "messages": [],
-                    "last_message": {},
-                    "seen_message": 0,
-                    "chat_id": self.create_chat_id()
-                }
-
-                self.msg_conn.execute("INSERT INTO private_messages (chat_uname, chat_data) VALUES (?, ?)", (from_user, json.dumps(user_data)))
-                self.msg_conn.commit()
-                return {"status": "OK", "chat": user_data}
-            else:return {"status": verify_from_user['status']}
-        else:return {"status": "EXISTS_CHAT"}
-    
-    def addPrivateMessage(
-            self,
-            from_auth: str,
-            to_user: str,
-            message: str,
-            timestamp: str = None,
-            reply_data: dict = None
-    ):
-        message = message.strip()
-        timestamp = timestamp if not timestamp is None else time.strftime("%H:%M")
-        verify_auth = self.user_manager.getUserByAuth(from_auth)
-        verify_user = self.user_manager.getUserByUName(to_user)
-        
-        if verify_auth['status'] == "OK":
-            if verify_user['status'] == "OK":
-                self.addChat(verify_auth['user']['username'])
-                self.addChat(verify_user['user']['username'])
-
-                from_u = self.getChatByUName(verify_auth['user']['username'])
-                to_u = self.getChatByUName(verify_user['user']['username'])
-
-                message_data = {
-                    "from_user": verify_auth['user']['username'],
-                    "to_user": verify_user['user']['username'],
-                    "message": message,
-                    "timestamp": timestamp,
-                    "message_id": self.create_message_id(),
-                    "is_seen": False,
-                    "is_edit": False
-                }
-
-                if not reply_data is None:
-                    message_data['reply_to_message'] = {}
-                    message_data['reply_to_message']['from_user'] = reply_data.get("from_user", "").strip()
-                    message_data['reply_to_message']['message_id'] = reply_data.get("message_id", "").strip()
-                    message_data['reply_to_message']['message'] = reply_data.get("message", "").strip()
-                    message_data['reply_to_message']['timestamp'] = reply_data.get("timestamp", "").strip()
-                else:message_data['reply_to_message'] = {}
-
-                from_u['chat']['messages'].append(message_data)
-                to_u['chat']['messages'].append(message_data)
-
-                from_u['chat']['last_message'] = message_data
-                from_u['chat']['seen_message'] = from_u['chat']['seen_message'] + 1
-
-                to_u['chat']['last_message'] = message_data
-                to_u['chat']['seen_message'] = to_u['chat']['seen_message'] + 1
-
-                self.msg_conn.execute("UPDATE private_messages SET chat_data = ? WHERE chat_uname = ?", (json.dumps(from_u['chat']), verify_auth['user']['username']))
-                self.msg_conn.execute("UPDATE private_messages SET chat_data = ? WHERE chat_uname = ?", (json.dumps(to_u['chat']), verify_user['user']['username']))
-
-                self.msg_conn.commit()
-
-                return {"status": "OK", "message": message_data}
-            else:return {"status": verify_user['status']}
-        else:return {"status": verify_auth['status']}
-
-    def getMessagesByUName(self, uname: str):
-        verify = self.getChatByUName(uname)
-
-        if verify['status'] == "OK":
-            datas = []
-            for message in verify['chat']['messages']:
-                datas.append(json.dumps(message))
-            
-            seted_data = set(datas)
-            messages = []
-
-            for data in seted_data:
-                messages.append(json.loads(data))
-
-            return {"status": "OK", "messages": messages}
-        else:return {"status": verify['status'], "messages": []}
-    
-    def getMessagesByAuth(self, auth_token: str):
-        verify = self.getChatByAuth(auth_token)
-
-        if verify['status'] == "OK":
-            datas = []
-            for message in verify['chat']['messages']:
-                datas.append(json.dumps(message))
-            
-            seted_data = set(datas)
-            messages = []
-
-            for data in seted_data:
-                messages.append(json.loads(data))
-
-            return {"status": "OK", "messages": messages}
-        else:return {"status": verify['status'], "messages": []}
-
-    def getAnyMessages(self) -> list:
-        chats = self.getChats()
-        messages = []
-
-        for chat in chats:
-            chat = json.loads(chat[1])
-            for message in chat['messages']:
-                if not message in messages:
-                    messages.append(message)
-
-        return messages
-    
-    def getMessageByID(self, message_id: str):
-        messages = self.getAnyMessages()
-
-        for message in messages:
-            if message['message_id'] == message_id:
-                return {"status": "OK", "message": message}
-        
-        return {"status": "UNREACHABLE_MESSAGE_ID", "message": {}}
-
-    def markMessagesByMessageId(self, message_id: str):
-        message = self.getMessageByID(message_id)
-
-        if message['status'] == "OK":
-            from_user = message['message']['from_user']
-            to_user = message['message']['to_user']
-
-            from_chat = self.getChatByUName(from_user)
-            to_chat = self.getChatByUName(to_user)
-
-            print(from_chat['chat']['messages'].index(message['message']))
-            print(to_chat['chat']['messages'].index(message['message']))
-
-            return {"from": from_chat, "to": to_chat}
-            # chat = self.getChatByUName(message['message']['from_user'])
-            # to_chat = self.getChatByUName(chat['chat']['from_user'])
-
-            # messages = list(chat['chat']['messages'])
-            # msg_index = messages.index(message['message'])
-            # messages[msg_index]['is_seen'] = True
-            # messages.insert(msg_index, messages[msg_index])
-            # chat['chat']['seen_message'] = chat['chat']['seen_message'] - 1 if chat['chat']['seen_message'] > 0 else 0
-            # chat['last_message'] = chat['chat']['messages'][-1]
-
-            # print(chat['last_message'])
-
-            # messages = list(to_chat['chat']['messages'])
-            # msg_index = messages.index(message['message'])
-            # messages[msg_index]['is_seen'] = True
-            # messages.insert(msg_index, messages[msg_index])
-            # to_chat['chat']['seen_message'] = to_chat['chat']['seen_message'] - 1 if to_chat['chat']['seen_message'] > 0 else 0
-            # to_chat['last_message'] = to_chat['chat']['messages'][-1]
-
-            # self.msg_conn.cursor().execute("UPDATE private_messages SET chat_data = ? WHERE chat_uname = ?", (json.dumps(chat['chat']), message['message']['from_user']))
-            # self.msg_conn.cursor().execute("UPDATE private_messages SET chat_data = ? WHERE chat_uname = ?", (json.dumps(to_chat['chat']), to_chat['chat']['from_user']))
-            # self.msg_conn.commit()
-
-            # return {"status": "OK", "message": messages[msg_index]}
-        else:return{"status": message['status']}
-
-    #def editMessage(self, auth_token: str, message_id: str, new_message: str)
-
-class GroupManager:
+class GroupManager(object):
     def __init__(self, user_manager: UserManager):
         self.user_manager = user_manager
         self.group_conn = sqlite3.connect("data/groups.db", check_same_thread=False)
@@ -540,9 +337,11 @@ class GroupManager:
                 finally_users = []
 
                 for member in members:
-                    ver_user = self.user_manager.getUserByUName(member)
-                    if ver_user['stauts'] == "OK":
-                        if ver_user['user']['can_join_groups']:finally_users.append(member)
+                    ver_user = self.user_manager.getUserByUserID(member)
+                    if ver_user['status'] == "OK":
+                        if ver_user['user']['settings']['can_join_groups']:finally_users.append(member)
+
+                finally_users.append(verify['user']['user_id'])
 
                 gid = self.create_group_id()
                 group_data = {
@@ -554,7 +353,7 @@ class GroupManager:
                     "created_at": time.ctime(time.time()),
                     "owner": verify['user']['user_id'],
                     "admins": [verify['user']['user_id']],
-                    "members": [verify['user']['user_id']],
+                    "members": finally_users,
                     "messages": [],
                     "last_message": {},
                     "pinned_message": {},
@@ -702,19 +501,19 @@ class GroupManager:
             
         return {"status": "OK", "groups": finded_groups}
     
-    def addAdmin(self, auth_token: str, member_id: str, group_id: str):
+    def addAdmin(self, auth_token: str, member_user_id: str, group_id: str):
         owner_veri = self.user_manager.getUserByAuth(auth_token)
-        membr_veri = self.user_manager.getUserByUName(member_id)
+        membr_veri = self.user_manager.getUserByUserID(member_user_id)
         group_veri = self.getGroupByID(group_id)
 
         if owner_veri['status'] == "OK":
             if membr_veri['status'] == "OK":
                 if group_veri['status'] == "OK":
                     if owner_veri['user']['username'] == group_veri['group']['owner']:
-                        if member_id in group_veri['group']['members']:
-                            if not member_id in group_veri['group']['admins']:
-                                group_veri['group']['admins'].append(member_id)
-                                self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(group_veri['group']),group_veri['group']['gid']))
+                        if member_user_id in group_veri['group']['members']:
+                            if not member_user_id in group_veri['group']['admins']:
+                                group_veri['group']['admins'].append(member_user_id)
+                                self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(group_veri['group']), group_veri['group']['gid']))
                                 self.group_conn.commit()
                                 return {"status": "OK", "admins": group_veri['group']['admins']}
                             else:return {"status": "ADMINS_EXISTS"}
@@ -724,19 +523,19 @@ class GroupManager:
             else:return {"status": "USER_NOT_FOUND"}
         else:return {"status": "USER_NOT_FOUND"}
 
-    def removeAdmin(self, auth_token: str, admin_id: str, group_id: str):
+    def removeAdmin(self, auth_token: str, admin_user_id: str, group_id: str):
         owner_veri = self.user_manager.getUserByAuth(auth_token)
-        membr_veri = self.user_manager.getUserByUName(admin_id)
+        membr_veri = self.user_manager.getUserByUserID(admin_user_id)
         group_veri = self.getGroupByID(group_id)
 
         if owner_veri['status'] == "OK":
             if membr_veri['status'] == "OK":
                 if group_veri['status'] == "OK":
                     if owner_veri['user']['username'] == group_veri['group']['owner']:
-                        if admin_id in group_veri['group']['members']:
-                            if admin_id in group_veri['group']['admins']:
-                                group_veri['group']['admins'].remove(admin_id)
-                                self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(group_veri['group']),group_veri['group']['gid']))
+                        if admin_user_id in group_veri['group']['members']:
+                            if admin_user_id in group_veri['group']['admins']:
+                                group_veri['group']['admins'].remove(admin_user_id)
+                                self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(group_veri['group']), group_veri['group']['gid']))
                                 self.group_conn.commit()
                                 return {"status": "OK", "admins": group_veri['group']['admins']}
                             else:return {"status": "MEMBER_IS_NOT_ADMIN"}
@@ -746,9 +545,9 @@ class GroupManager:
             else:return {"status": "USER_NOT_FOUND"}
         else:return {"status": "USER_NOT_FOUND"}
 
-    def addMemberToGroup(self, auth_token: str, group_id: str, username: str):
+    def addMemberToGroup(self, auth_token: str, group_id: str, user_id: str):
         v = self.user_manager.getUserByAuth(auth_token)
-        verify_user = self.user_manager.getUserByUName(username)
+        verify_user = self.user_manager.getUserByUserID(user_id)
         verify_group = self.getGroupByID(group_id)
 
         if v['status'] == "OK":
@@ -756,7 +555,7 @@ class GroupManager:
                 if verify_group['status'] == "OK":
                     if verify_user['user']['settings']['can_join_groups']:
                         if not verify_user['user']['username'] in verify_group['group']['members']:
-                            verify_group['group']['members'].append(username)
+                            verify_group['group']['members'].append(user_id)
                             self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), verify_group['group']['gid']))
                             self.group_conn.commit()
                             return {"status": "OK", "members": verify_group['group']['members']}
@@ -773,38 +572,42 @@ class GroupManager:
         if v['status'] == "OK":
 
             if verify_group['status'] == "OK":
-                return {"status": "OK", "members": verify_group['group']['members']}
+                if v['user']['user_id'] in verify_group['group']['members']:
+                    return {"status": "OK", "members": verify_group['group']['members']}
+                else:return {"status": "AUTH_DOESNT_IN_GROUP"}
             else:return {"status": "INVALID_GROUP_ID", "members": []}
         else:return {'status': "INVALID_TOKEN"}
 
-    def getGroupMembersByGID(self, auth_token: str,gid: str) -> dict:
+    def getGroupMembersByGID(self, auth_token: str, gid: str) -> dict:
         v = self.user_manager.getUserByAuth(auth_token)
         verify_group = self.getGroupByGID(gid)
 
         if v['status'] == "OK":
 
             if verify_group['status'] == "OK":
-                return {"status": "OK", "members": verify_group['group']['members']}
+                if v['user']['user_id'] in verify_group['group']['members']:
+                    return {"status": "OK", "members": verify_group['group']['members']}
+                else:return {"status": "AUTH_DOESNT_IN_GROUP"}
             else:return {"status": "INVALID_GID", "members": []}
         
         else:return {"status": "INVALID_TOKEN"}
 
-    def removeMemberFromGroup(self, auth_token: str, member_id: str, group_id: str):
+    def removeMemberFromGroup(self, auth_token: str, member_user_id: str, group_id: str):
         v = self.user_manager.getUserByAuth(auth_token)
-        vm = self.user_manager.getUserByUName(member_id)
+        vm = self.user_manager.getUserByUserID(member_user_id)
         vg = self.getGroupByID(group_id)
 
         if v['status'] == "OK":
             if vm['status'] == "OK":
                 if vg['status'] == "OK":
-                    if member_id in vg['group']['members']:
-                        if not member_id == v['user']['username']:
-                            if v["user"]['username'] == vg['group']['owner']:
-                                vg['group']['members'].remove(member_id)
+                    if member_user_id in vg['group']['members']:
+                        if not member_user_id == v['user']['user_id']:
+                            if v["user"]['user_id'] in vg['group']['admins']:
+                                vg['group']['members'].remove(member_user_id)
                                 self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(vg['group']), vg['group']['gid']))
                                 self.group_conn.commit()
                                 return {"status": "OK", "members": vg['group']['members']}
-                            else:return {"status": "TOKEN_IS_NOT_OWNER"}
+                            else:return {"status": "TOKEN_IS_NOT_ADMIN"}
                         else:return {"status": "CANNOT_REMOVE_OWNER"}
                     else:return {"status": "MEMBER_NOT_FOUND"}
                 else:return {"status": "INVALID_GROUP_ID"}
@@ -819,7 +622,7 @@ class GroupManager:
         if verify_user['status'] == "OK":
             if verify_group['status'] == "OK":
                 if verify_message['status'] == "OK":
-                    if verify_user['user']['username'] in verify_group['group']['admins']:
+                    if verify_user['user']['user_id'] in verify_group['group']['admins']:
                         verify_group['group']['pinned_message'] = verify_message['message'][message_id]
                         self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), verify_group['group']['gid']))
                         self.group_conn.commit()
@@ -835,7 +638,7 @@ class GroupManager:
 
         if verify_user['status'] == "OK":
             if verify_group['status'] == "OK":
-                if verify_user['user']['username'] in verify_group['group']['admins']:
+                if verify_user['user']['user_id'] in verify_group['group']['admins']:
                     verify_group['group']['pinned_message'] = {}
                     self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), verify_group['group']['gid']))
                     self.group_conn.commit()
@@ -850,7 +653,7 @@ class GroupManager:
 
         if verify_user['status'] == "OK":
             if verify_group['status'] == "OK":
-                if verify_user['user']['username'] in verify_group['group']['admins']:
+                if verify_user['user']['user_id'] in verify_group['group']['admins']:
                     if not verify_group["group"]['allow_to_send_messages'] == False:
                         verify_group['group']['allow_to_send_messages'] = False
                         self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), verify_group['group']['gid']))
@@ -867,7 +670,7 @@ class GroupManager:
 
         if verify_user['status'] == "OK":
             if verify_group['status'] == "OK":
-                if verify_user['user']['username'] in verify_group['group']['admins']:
+                if verify_user['user']['user_id'] in verify_group['group']['admins']:
                     if not verify_group["group"]['allow_to_send_messages'] == True:
                         verify_group['group']['allow_to_send_messages'] = True
                         self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), verify_group['group']['gid']))
@@ -928,7 +731,7 @@ class GroupManager:
                     verify_group_msg['message']['is_edit'] = True
                     messages.insert(msg_index, verify_group_msg['message'])
                     self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group_msg['group']), verify_group_msg['group']['gid']))
-                    
+                    self.group_conn.commit()
                     return {"status": "OK", "group_messages": messages}
                 else:return {"status": "NOT_OWNED_MESSAGE"}
             else:return {"status": verify_group_msg['status']}
@@ -942,7 +745,7 @@ class GroupManager:
             groups = self.getGroups()
 
             for group in groups:
-                if verify_user['user']['username'] in group['members']:
+                if verify_user['user']['user_id'] in group['members']:
                     injoined_groups.append(group)
 
             return {"status": "OK", "groups": injoined_groups}
@@ -952,13 +755,246 @@ class GroupManager:
             self,
             auth_token: str,
             group_id: str
-    ):...
-        # verify_user = self.user_manager.getUserByAuth(auth_token)
-        # verify_group = self.getGroupByID(group_id)
+    ):
+        verify_user = self.user_manager.getUserByAuth(auth_token)
+        verify_group = self.getGroupByID(group_id)
 
-        # if verify_user['stauts'] == "OK":
-        #     if verify_group['status'] == "OK":
-        #         if verify_user['']
+        if verify_user['status'] == "OK":
+            if verify_group['status'] == "OK":
+                if verify_user['user']['user_id'] in verify_group['group']['members']:
+
+                    verify_group['group']['members'].remove(verify_user['user']['user_id'])
+
+                    if verify_user['user']['user_id'] in verify_group['group']['admins']:
+                        verify_group['group']['admins'].remove(verify_user['user']['user_id'])
+                    
+                    self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), verify_group['group']['gid']))
+                    self.group_conn.commit()
+
+                    return {"status": "OK", "group": verify_group['group']}
+                else:return {"status": "AUTH_DOESNT_IN_GROUP", "group": {}}
+            else:return {"status": "INVALID_GROUP_ID"}
+        else:return {"status": "INVALID_AUTH"}
+
+    def joinGroup(
+            self,
+            auth_token: str,
+            group_id: str
+    ):
+        verify_user = self.user_manager.getUserByAuth(auth_token)
+        verify_group = self.getGroupByID(group_id)
+
+        if verify_user['status'] == "OK":
+            if verify_group['status'] == "OK":
+                if not verify_user['user']['user_id'] in verify_group['group']['members']:
+
+                    verify_group['group']['members'].append(verify_user['user']['user_id'])
+
+                    if not verify_user['user']['user_id'] in verify_group['group']['admins'] and verify_user['user']['user_id'] == verify_group['group']['owner']:
+                        verify_group['group']['admins'].append(verify_user['user']['user_id'])
+                    
+                    self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), verify_group['group']['gid']))
+                    self.group_conn.commit()
+
+                    return {"status": "OK", "group": verify_group['group']}
+                else:return {"status": "AUTH_IN_GROUP", "group": {}}
+            else:return {"status": "INVALID_GROUP_ID"}
+        else:return {"status": "INVALID_AUTH"}
+
+
+class PrivateManager(object):
+    def __init__(self, user_manager: UserManager):
+        self.clients_conn = sqlite3.connect("data/prv_messages.db", check_same_thread=False)
+        self.user_manager = user_manager
+        self.create_table()
+
+    def create_table(self):
+        self.clients_conn.execute("CREATE TABLE IF NOT EXISTS messages ( user_id, involved_data )")
+
+    def create_message_id(self) -> str:
+        return str(random.randint(100000, 999999999999))
+
+    def getChats(self) -> list:
+        return self.clients_conn.execute("SELECT * FROM messages").fetchall()
+    
+    def getChatByUID(self, user_id: str):
+        chats = self.getChats()
+
+        for chat in chats:
+            if chat[0] == user_id:
+                return {"status": "OK", "chat": json.loads(chat[1])}
+            
+        return {"status": "INVALID_USER_ID", "chat": {}}
+
+    def addIndex(
+            self,
+            user_id: str
+    ):
+        verify_user = self.user_manager.getUserByUserID(user_id)
+        verify_chat = self.getChatByUID(user_id)
+
+        if verify_user['status'] == "OK":
+            if not verify_chat['status'] == "OK":
+                involved_data = {
+                    "user_id": user_id,
+                    "messages": [],
+                    "last_message": {}
+                }
+
+                self.clients_conn.execute("INSERT INTO messages (user_id, involved_data) VALUES (?, ?)", (user_id, json.dumps(involved_data)))
+                self.clients_conn.commit()
+
+                return {"status": "OK", "involved_data": involved_data}
+            else:return {"status": "EXISTS_CHAT"}
+        else:return {"status": "INVALID_USER_ID"}
+
+    def addPrivateMessage(
+            self,
+            from_auth: str,
+            to_user_id: str,
+            message: str,
+            timestamp: str = None,
+            reply_data: dict = {}
+    ):
+        verify_auth = self.user_manager.getUserByAuth(from_auth)
+        verify_user = self.user_manager.getUserByUserID(to_user_id)
+
+        message = message.strip()
+        timestamp = time.strftime("%H:%M") if timestamp is None else timestamp
+
+        if verify_auth['status'] == "OK":
+            if verify_user['status'] == "OK":
+                auth_chat = self.getChatByUID(verify_auth['user']['user_id'])
+                user_chat = self.getChatByUID(verify_user['user']['user_id'])
+
+                message_data = {
+                    "from": verify_auth['user']['fullname'],
+                    "to": verify_user['user']['fullname'],
+                    "sender_user_id": verify_auth['user']['user_id'],
+                    "reciver_user_id": verify_user['user']['user_id'],
+                    "message": message,
+                    "message_id": self.create_message_id(),
+                    "timestamp": timestamp,
+                    "is_seen": False,
+                    "is_edit": False,
+                    "reply_data": reply_data
+                }
+
+                auth_chat['chat']['messages'].append({verify_user['user']['username']: message_data})
+                user_chat['chat']['messages'].append({verify_auth['user']['username']: message_data})
+
+                auth_chat['chat']['last_message'] = message_data
+                user_chat['chat']['last_message'] = message_data
+
+                self.clients_conn.execute("UPDATE messages SET involved_data = ? WHERE user_id = ?", (json.dumps(auth_chat['chat']), verify_auth['user']['user_id']))
+                self.clients_conn.execute("UPDATE messages SET involved_data = ? WHERE user_id = ?", (json.dumps(user_chat['chat']), verify_user['user']['user_id']))
+
+                self.clients_conn.commit()
+
+                return {"status": "OK", "message": message_data}
+
+            else:return {"status": "INVALID_USER_ID"}
+        else:return {"status": verify_user['status']}
+
+    def getMessageByID(self, user_id: str, message_id):
+        chat = self.getChatByUID(user_id)
+
+        if chat['status'] == "OK":
+            for message in chat['chat']['messages']:
+                for user in list(message.keys()):
+                    if message[user]['message_id'] == message_id:
+                        return {"status": "OK", "message": message[user]}
+            
+            return {"status": "UNREACHABLE_MESSAGE_ID"}
+        else:return {"status": chat['status']}
+
+    def editMessage(self, from_user_id: str, message_id: str, new_message: str):
+        from_chat = self.getChatByUID(from_user_id)
+        from_msg = self.getMessageByID(from_user_id, message_id)
+
+        
+        if from_chat['status'] == "OK":
+            if from_msg['status'] == "OK":
+                d = {"msg": ""}
+                for message in from_chat['chat']['messages']:
+                    for user in list(message.keys()):
+                        if message[user]['message_id'] == message_id:
+                            # Update the message content for both sender and receiver
+                            message[user]['message'] = new_message.strip()
+                            message[user]['is_edit'] = True
+                            
+
+                            if not from_chat['chat']['last_message'] == message[user]:
+                                from_chat['chat']['last_message'] = message[user]
+                            
+
+                            self.clients_conn.execute("UPDATE messages SET involved_data = ? WHERE user_id = ?", (json.dumps(from_chat['chat']), from_user_id))
+                            self.clients_conn.commit()
+
+                            other_user_id = message[user]['reciver_user_id'] if from_user_id == message[user]['sender_user_id'] else message[user]['sender_user_id']
+                            other_chat = self.getChatByUID(other_user_id)
+                            for message in other_chat['chat']['messages']:
+                                for user in list(message.keys()):
+                                    if message[user]['message_id'] == message_id:
+                                        message[user]['message'] = new_message.strip()
+                                        message[user]['is_edit'] = True
+                                        
+                                        # Update last message if necessary
+                                        if not other_chat['chat']['last_message'] == message[user]:
+                                            other_chat['chat']['last_message'] = message[user]
+
+                                        self.clients_conn.execute("UPDATE messages SET involved_data = ? WHERE user_id = ?", (json.dumps(other_chat['chat']), other_user_id))
+                                        self.clients_conn.commit()
+
+                            d['msg'] = {"status": "OK", "updated_message": message[user]}
+
+
+                return d["msg"]
+            else:
+                return {"status": "UNREACHABLE_MESSAGE_ID"}
+        else:
+            return {"status": "INVALID_USER_ID"}
+        
+    def markMessageAsRead(self, from_user_id: str, message_id: str):
+        from_chat = self.getChatByUID(from_user_id)
+        from_msg = self.getMessageByID(from_user_id, message_id)
+
+        
+        if from_chat['status'] == "OK":
+            if from_msg['status'] == "OK":
+                d = {"msg": ""}
+                for message in from_chat['chat']['messages']:
+                    for user in list(message.keys()):
+                        if message[user]['message_id'] == message_id:
+                            message[user]['is_seen'] = True
+                            
+                            if not from_chat['chat']['last_message'] == message[user]:
+                                from_chat['chat']['last_message'] = message[user]
+                            
+                            self.clients_conn.execute("UPDATE messages SET involved_data = ? WHERE user_id = ?", (json.dumps(from_chat['chat']), from_user_id))
+                            self.clients_conn.commit()
+                            other_user_id = message[user]['reciver_user_id'] if from_user_id == message[user]['sender_user_id'] else message[user]['sender_user_id']
+                            other_chat = self.getChatByUID(other_user_id)
+                            for message in other_chat['chat']['messages']:
+                                for user in list(message.keys()):
+                                    if message[user]['message_id'] == message_id:
+                                        message[user]['is_seen'] = True
+                                        
+                                        if not other_chat['chat']['last_message'] == message[user]:
+                                            other_chat['chat']['last_message'] = message[user]
+
+                                        self.clients_conn.execute("UPDATE messages SET involved_data = ? WHERE user_id = ?", (json.dumps(other_chat['chat']), other_user_id))
+                                        self.clients_conn.commit()
+
+                            d['msg'] = {"status": "OK", "updated_message": message[user]}
+
+
+                return d["msg"]
+            else:
+                return {"status": "UNREACHABLE_MESSAGE_ID"}
+        else:
+            return {"status": "INVALID_USER_ID"}
+
 
 # print(UserManager().add_user("ali", "+9843278432", "Someone"))
 # print(UserManager().getUsers())
@@ -989,70 +1025,74 @@ class GroupManager:
 #data = ChatManager(UserManager()).addPrivateMessage("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "jafar", "Pedaret Bemire Jafar")
 #data = ChatManager(UserManager()).getChats()
 #data = ChatManager(UserManager()).getAnyMessages()
-import rich
+# import rich
 #data = ChatManager(UserManager()).getChatByUName("ali")
 #data = ChatManager(UserManager()).markMessagesByMessageId("2851711857015")
 #data = ChatManager(UserManager()).addPrivateMessage("QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "jafar", "Hello Jafar")
-data = ChatManager(UserManager()).markMessagesByMessageId("5985075970911")
+#data = GroupManager(UserManager()).joinGroup("D7ejdNC0IjTSFvtdLZsgObi_nCSIqwwIl4GYg8Jh21U", group_id="zrex")
 #data = ChatManager(UserManager()).getChatByUName("ali")
-rich.print(data)
+#data = GroupManager(UserManager()).getGroups()
+# data = PrivateManager(UserManager()).editMessage("2968877301", "2615108647", "156622353641", "JAFARRRRR")
+# data = PrivateManager(UserManager()).getChats()#.getChatByUID("2615108647")
+
+# data = PrivateManager(UserManager()).addIndex("2968877301")
+# data = PrivateManager(UserManager()).addIndex("2615108647")
+# data = PrivateManager(UserManager()).addPrivateMessage("8hHaNxL5i5OLwT1nvhj5URoFDxsratbC7cscxGmdZHA", "2615108647", "Jafar is Dalghak")
+
+# data = PrivateManager(UserManager()).markMessageAsRead("2968877301", "2615108647", "156622353641")
+
+# rich.print(data)
 
 """
 
 {
     'status': 'OK',
-    'chat': {
-        'from_user': 'ali',
-        'from_user_token': 'QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q',
-        'messages': [],
-        'last_message': {},
-        'seen_message': 0,
-        'chat_id': '+901676014061'
+    'message': {
+        'from': 'Ali is Godratmand',
+        'to': 'Allah is God',
+        'sender_user_id': '2968877301',
+        'reciver_user_id': '2615108647',
+        'message': 'Jafar is Dalghak',
+        'message_id': '405005955940',
+        'timestamp': '13:28',
+        'is_seen': False,
+        'is_edit': False,
+        'reply_data': {}
     }
 }
 
-[
-    (
-        '715607608',
-        '{"phone": "043278432", "username": "ali", "fullname": "Someone", "bio": "", "profile": 
-"https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&", "token": 
-"QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "user_id": "715607608", "status": "online", "point": "user", "settings": 
-{"hide_phone_number": true, "can_join_groups": true, "can_see_profiles": true, "inner_gif": null}}'
-    ),
-    (
-        '7844191996',
-        '{"phone": "036574353", "username": "jafar", "fullname": "jafar mamady", "bio": "life was gone wrong", "profile": 
-"https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&", "token": 
-"D7ejdNC0IjTSFvtdLZsgObi_nCSIqwwIl4GYg8Jh21U", "user_id": "7844191996", "status": "online", "point": "user", "settings": 
-{"hide_phone_number": true, "can_join_groups": true, "inner_gif": null}}'
-    )
-]
+{
+    'status': 'OK',
+    'user': {
+        'phone': '04367242342',
+        'username': 'ali',
+        'fullname': 'Ali is Godratmand',
+        'bio': '',
+        'profile': 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&',
+        'token': '8hHaNxL5i5OLwT1nvhj5URoFDxsratbC7cscxGmdZHA',
+        'user_id': '2968877301',
+        'status': 'online',
+        'point': 'user',
+        'is_suspension': False,
+        'settings': {'hide_phone_number': True, 'can_join_groups': True, 'inner_gif': None}
+    }
+}
 
-
-{'status': 'OK', 'group': {'group_title': 'دلقک بازی', 'group_caption': 'Someone is Dalghak', 'group_id': 'ReDalz', 'gid': '-321822164767',
-'group_profile': 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRGqisajcuqgEBg05gUKz5MX3k6CFQoXThhde0LECDOocysVuSAFFh5hECH4cLVyCpM7p
-M&usqp=CAU', 'created_at': 'Sun Sep 15 00:04:50 2024', 'owner': 'ali', 'admins': ['ali'], 'members': ['ali'], 'messages': [], 'last_message'
-: {}}}
-
-
-[('715607608', '{"phone": "043278432", "username": "ali", "fullname": "Someone", "bio": "", "profile": "https://encrypted-tbn0.gstatic.com/i
-mages?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&", "token": "QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "user_id": "715607608", "s
-tatus": "online", "point": "user", "settings": {"hide_phone_number": true, "can_join_groups": true, "can_see_profiles": true, "inner_gif": n
-ull}}'), ('7844191996', '{"phone": "036574353", "username": "jafar", "fullname": "jafar mamady", "bio": "life was gone wrong", "profile": "h
-ttps://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&", "token": "D7ejdNC0IjTSFvtdLZsgObi_nCSIqwwIl4GYg
-8Jh21U", "user_id": "7844191996", "status": "online", "point": "user", "settings": {"hide_phone_number": true, "can_join_groups": true, "inn
-er_gif": null}}')]
-
-[('ali', '{"from_user": "ali", "from_user_token": "QC2wLIDwv_PKUqGzIr0meMgZTCttozz502WM2f5O6-Q", "messages": [{"from_user": "ali", "to_user": "jafar",
- "message": "Nice to meet you Jafar", "timestamp": "22:36", "message_id": "9065585379845", "is_seen": false, "is_edit": false, "reply_to_message": {}}
-, {"from_user": "ali", "to_user": "jafar", "message": "Nice to meet you Jafar 2", "timestamp": "22:37", "message_id": "6917256662254", "is_seen": true
-, "is_edit": false, "reply_to_message": {}}], "last_message": {"from_user": "ali", "to_user": "jafar", "message": "Nice to meet you Jafar 2", "timesta
-mp": "22:37", "message_id": "6917256662254", "is_seen": false, "is_edit": false, "reply_to_message": {}}, "seen_message": 2, "total_messages": 0}'), (
-'jafar', '{"from_user": "jafar", "from_user_token": "D7ejdNC0IjTSFvtdLZsgObi_nCSIqwwIl4GYg8Jh21U", "messages": [{"from_user": "ali", "to_user": "jafar
-", "message": "Nice to meet you Jafar", "timestamp": "22:36", "message_id": "9065585379845", "is_seen": false, "is_edit": false, "reply_to_message": {
-}}, {"from_user": "ali", "to_user": "jafar", "message": "Nice to meet you Jafar 2", "timestamp": "22:37", "message_id": "6917256662254", "is_seen": fa
-lse, "is_edit": false, "reply_to_message": {}}], "last_message": {"from_user": "ali", "to_user": "jafar", "message": "Nice to meet you Jafar 2", "time
-stamp": "22:37", "message_id": "6917256662254", "is_seen": false, "is_edit": false, "reply_to_message": {}}, "seen_message": 2, "total_messages": 0}')
-]
+{
+    'status': 'OK',
+    'user': {
+        'phone': '07657756756',
+        'username': 'jafar',
+        'fullname': 'Allah is God',
+        'bio': '',
+        'profile': 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&',
+        'token': 'YxJdmo8UkqLngRhwGva2PSDH_u_gttKRYwYVQtH4_cY',
+        'user_id': '2615108647',
+        'status': 'online',
+        'point': 'user',
+        'is_suspension': False,
+        'settings': {'hide_phone_number': True, 'can_join_groups': True, 'inner_gif': None}
+    }
+}
 
 """
