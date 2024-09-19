@@ -1,201 +1,289 @@
-from utlis.encrypt import CryptoServer
-from db.manager import ChatManager, UserManager, GroupManager
-import logging, random
-from datetime import datetime
-import pytz, json, codecs
+from db.manager import UserManager, PrivateManager, GroupManager
+
 
 class Handler:
-    def __init__(self, chatManager: ChatManager, userManager: UserManager) -> None:
-        self.chatManager  = chatManager
-        self.userManager  = userManager
-        self.groupManager = GroupManager(user_manager=userManager)
-    
-    def getUserInfo(self, username: str, token: str):
-        return self.userManager.authenticate_user(username=username, auth_token=token)
-    
-    def login(self, username: str, token: str, phone_number):
-        return self.userManager.login(username=username, auth_token=token, phone_number=phone_number)
-    
-    def getUsernameByID(self, username: str, token: str, getUser: str):
-        return self.userManager.getUsernameByID(username=username, auth_token=token, getUser=getUser)
-    
-    def getGroupByID(self, username: str, token: str, group_name: str):
-        return self.groupManager.get_group_info(username=username, token=token, group_name=group_name)   
-    
-    def getChats(self, username: str, token: str):
-        return self.chatManager.getUserList(username=username, auth_token=token)
-    
-    def getMembersList(self, username: str, token: str, group_name: str):
-        return self.groupManager.get_members_group(username=username, token=token, group_name=group_name)    
-    
-    def editMessages(self, username: str, token: str, to: str, message_id: str, newMessage: str):
-        print(f"TO {to}, message_id : {message_id}, newMessage: {newMessage}")
-        return self.chatManager.edit_message(username=username, token=token, message_id=message_id, new_message=newMessage, to_user=to)
-    
-    def getMessages(self, username: str, token: str, user: str):
-        return self.chatManager.getMessages(username=username, auth_token=token, user=user)
-    
-    def update_profile(self, username, token, data: dict):
-            return self.userManager.update_user_profile(
-                username=username,
-                auth_token=token,
-                fullname=data.get('fullname'),
-                bio=data.get('bio'),
-                profile=data.get('profile'),
-                inner_gif=data.get("inner_gif"),
-                hide_phone_number=data.get("hide_phone_number"),
-                can_join_groups=data.get("can_join_groups"),
-                can_see_profiles=data.get("can_see_profiles")
-            )
-    
-    def register(self, username: str, phone_number: str, fullname: str, profile=None):
-        default_profile = 'https://www.google.com/url?sa=i&url=https%3A%2F%2Fstock.adobe.com%2Fimages%2Fdefault-avatar-profile-flat-icon-social-media-user-vector-portrait-of-unknown-a-human-image%2F353110097&psig=AOvVaw3CkGCCeJAqiqKqgZ_mMS0G&ust=1722945658368000&source=images&cd=vfe&opi=89978449&ved=0CBEQjRxqFwoTCNie4Ojm3YcDFQAAAAAdAAAAABAK'
-    
-        if profile is None or profile.strip() == '':
-            profile = default_profile
-        
-        return self.userManager.add_user(username=username, phone=phone_number, bio='', fullname=fullname, profile=profile)
-        
-    def mark_messages_as_read(self, username, token, target_user):
-        if self.userManager.authenticate_user(username=username, auth_token=token).get('status') == 'OK':
-            self.chatManager.reset_unread_message_count(username, target_user)
-            return {'status': 'OK'}
-        else:
-            return {'status': 'TOKEN_INVALID | NOT_FOUND'}
-        
-    def getChatsGroup(self, username: str, token: str):
-        auth_response = self.userManager.authenticate_user(username=username, auth_token=token)
-        if auth_response.get('status') != 'OK':
-            return {'status': 'TOKEN_INVALID | NOT_FOUND'}
+    def __init__(self) -> None:
+        self.user_manager = UserManager()
+        self.private_manager = PrivateManager(self.user_manager)
+        self.group_manager = GroupManager(self.user_manager)
 
-        try:
-            with open('data/private_messages.json', 'r') as file:
-                private_messages_data = json.load(file)
-            
-            user_groups = private_messages_data.get(username, {}).get('joinGroup', [])
-        except Exception as e:
-            logging.error(f"Error reading private_messages.json: {str(e)}")
-            return {'status': 'ERROR', 'message': 'Error reading private messages data'}
+        self.point_modes = self.user_manager.points
+        self.user_profile = self.user_manager.default_profile
+        self.ghostly_profile = self.user_manager.ghostly
+        self.default_group_profile = self.group_manager.default_group_profile
 
-        try:
-            with codecs.open('data/groups.json', 'r', encoding='utf-8') as file:
-                groups_data = json.load(file)
-            
-            group_data = {}
-            for group in user_groups:
-                if group in groups_data:
-                    if 'last' not in groups_data[group]:
-                        groups_data[group]['last'] = {
-                            "username": "CipherX",
-                            "message": "خوش اومدید به لند گرام",
-                            "time": "00:00",
-                            "message_id": 2697917
-                        }
-                    group_data[group] = {
-                        'profile': groups_data[group]['profile'],
-                        'bio': groups_data[group]['bio'],
-                        'last_message': groups_data[group]['last']
-                    }
-                    
-            return {'status': 'OK', 'data': group_data}
-        
-        except Exception as e:
-            logging.error(f"Error reading groups.json: {str(e)}")
-            return {'status': 'ERROR', 'message': 'Error reading groups data'}
-        
-    def getGroupMessages(self, username: str, token: str, group_name: str):
-        if self.userManager.authenticate_user(username=username, auth_token=token).get('status') == 'OK':
-            return {'status': 'OK', 'data': self.groupManager.get_group_messages(group_name=group_name)}
-        else:
-            return {'status': 'TOKEN_INVALID | NOT_FOUND'}         
-    def methodNum(self, method: str, data: dict, hash: CryptoServer):
-        try:
-            if method == 'editMessage':
-                return {"data_enc": self.editMessages(username=data['username'], token=data['token'], to=data['to'], message_id=data['message_id'], newMessage=data['newMessage'])}
-            elif method == 'getUserInfo':
-                return {"data_enc": self.getUserInfo(username=data['username'], token=data['token'])}
-            elif method == 'getMemberGroup':
-                return {"data_enc": self.getMembersList(username=data['username'], token=data['token'], group_name=data['group_name'])}               
-            elif method == 'getChats':
-                return {"data_enc": hash.encrypt(str(self.getChats(username=data['username'], token=data['token'])))}
-            elif method == 'register':
-                return {"data_enc": hash.encrypt(str(self.register(username=data['username'], phone_number=data['phone_number'], fullname=data['fullname'], profile=data.get('profile'))))}
-            elif method == 'login':
-                return {"data_enc": self.login(username=data['username'], phone_number=data['phone_number'], token=data['token'])}               
-            elif method == 'getUsernameByID':
-                return {"data_enc": self.getUsernameByID(username=data['username'], token=data['token'], getUser=data['getUser'])}
-            elif method == 'getGroupByID':
-                return {"data_enc": self.getGroupByID(username=data['username'], token=data['token'], group_name=data['group_name'])}
-            elif method == 'getMessages':
-                return {"data_enc": hash.encrypt(str(self.getMessages(username=data['username'], token=data['token'], user=data['user'])))}
-            elif method == 'updateProfile':
-                return {"data_enc": self.update_profile(username=data['username'], token=data['token'], data=data['update_data'])}
-            else:
-                return {
-                    'status': 'ERROR',
-                    'message': 'METHOD_INVALID'
-                }
-        except Exception as e:
-            logging.error(f"Error in methodNum: {str(e)}")
-            return {
-                'status': 'ERROR',
-                'message': str(e)
-            }
+    # ---- Users Functions ----
+
+    def getMe(self, auth_token: str):
+        return self.user_manager.getUserByAuth(auth_token)
     
-    def handle_send_message(self, data):
-        try:
-            from_user = data.get('from')
-            to_user = data.get('to')
-            message = data.get('message')
-            reply_data = data.get('reply', None)
+    def getUserInfo(self, auth_token: str, target_username: str):
+        verify_auth = self.user_manager.getUserByAuth(auth_token)
+        verify_target = self.user_manager.getUserByUName(target_username)
 
-            timestamp = datetime.now(pytz.timezone('Asia/Tehran')).strftime("%H:%M")
-            message_id = random.randint(1000, 9000000)
+        if verify_auth['status'] == "OK":
+            if verify_target['status'] == "OK":
+                del verify_target['user']['token']
+                if verify_target['user']['settings']['hide_phone_number']:
+                    del verify_target['user']['phone']
 
-            self.chatManager.add_private_message(from_user, to_user, message, timestamp, message_id, reply_data)
+                return verify_target
+            else:return verify_target
+        else:return verify_auth
 
-            return {
-                'status': 'success',
-                'data': {
-                    'from': from_user,
-                    'to': to_user,
-                    'message': message,
-                    'timestamp': timestamp,
-                    'message_id': message_id,
-                    'reply': reply_data
-                }
-            }
-        except Exception as e:
-            logging.error(f"Error in handle_send_message: {str(e)}")
-            return {
-                'status': 'ERROR',
-                'message': str(e)
-            }
+    def getAdmins(self, auth_token: str):
+        verify_auth = self.user_manager.getUserByAuth(auth_token)
 
-    def handle_send_group_message(self, data):
-        try:
-            from_user = data.get('from')
-            group_name = data.get('group')
-            message = data.get('message')
+        if verify_auth['status'] == "OK":
+            return self.user_manager.getAdmins()
+        else:return verify_auth
 
-            timestamp = datetime.now(pytz.timezone('Asia/Tehran')).strftime("%H:%M")
-            message_id = random.randint(1000, 9000000)
+    def getDevs(self, auth_token: str):
+        verify_auth = self.user_manager.getUserByAuth(auth_token)
 
-            self.groupManager.add_group_message(from_user, group_name, message, timestamp, message_id)
+        if verify_auth['status'] == "OK":
+            return self.user_manager.getDevs()
+        else:return verify_auth
 
-            return {
-                'status': 'success',
-                'data': {
-                    'from': from_user,
-                    'group': group_name,
-                    'message': message,
-                    'timestamp': timestamp,
-                    'message_id': message_id
-                }
-            }
-        except Exception as e:
-            logging.error(f"Error in handle_send_group_message: {str(e)}")
-            return {
-                'status': 'ERROR',
-                'message': str(e)
-            }
+    def sendCode(self, phone_number: str):
+        return self.user_manager.sendCode(phone_number)
+    
+    def agreeCode(self, phone_number: str, code: str):
+        return self.user_manager.agreeCode(phone_number, code)
+    
+    def createAccount(
+            self,
+            username: str,
+            phone: str,
+            fullname: str,
+            bio: str = "",
+            profile: str = None
+    ):
+        return self.user_manager.addUser(
+            username,
+            phone,
+            fullname,
+            bio,
+            profile
+        )
+    
+    def suspensionAccount(self, auth_token: str):
+        return self.user_manager.suspensionUser(auth_token)
+    
+    def editAccount(
+            self,
+            auth_token: str,
+
+            fullname: str = None,
+            username: str = None,
+            bio: str = None, 
+            profile: str = None,
+
+            inner_gif: str = None,
+            hide_phone_number: bool = None,
+            can_join_groups: bool = None
+    ):
+        return self.user_manager.update_user_profile(
+            auth_token,
+            fullname,
+            username,
+            bio,
+            profile,
+            inner_gif,
+            hide_phone_number,
+            can_join_groups
+        )
+    
+    def loginAccount(self, phone_number: str):
+        return self.user_manager.login(phone_number)
+    
+    def changePoint(self, auth_token: str, mode: str):
+        return self.user_manager.change_point(auth_token, mode)
+    
+    def offline(self, auth_token: str):
+        return self.user_manager.online(auth_token)
+    
+    def online(self, auth_token: str):
+        return self.user_manager.online(auth_token, "online")
+    
+    def searchUser(self, auth_token: str, username: str):
+        verify_auth = self.user_manager.getUserByAuth(auth_token)
+
+        if verify_auth['status'] == "OK":
+            return self.user_manager.searchUser(username)
+        else:return verify_auth
+
+    def isExistsUser(self, username: str):
+        return {"status": "OK", "user_status": self.user_manager.user_exists(username)}
+    
+    # ---- Groups Functions ----
+
+    def createGroup(
+            self,
+            auth_token: str,
+            group_title: str,
+            group_profile: str = "",
+            group_caption: str = "",
+            group_id: str = None,
+            members: str = []
+    ):
+        return self.group_manager.addGroup(
+            auth_token,
+            group_title,
+            group_profile,
+            group_caption,
+            group_id,
+            members
+        )
+    
+    def getGroupByID(self, group_id: str):
+        return self.group_manager.getGroupByID(group_id)
+    
+    def getGroupByGID(self, gid: str):
+        return self.group_manager.getGroupByGID(gid)
+    
+    def getGroupMessageByID(self, message_id: str):
+        return self.group_manager.getMessageByID(message_id)
+    
+    def sendGroupMessage(
+            self,
+            from_auth: str,
+            gid: str,
+            message: str,
+            timestamp: str = None,
+            reply_data: dict = {}
+    ):
+        return self.group_manager.addGroupMessage(
+            from_auth,
+            gid,
+            message,
+            timestamp,
+            reply_data
+        )
+    
+    def searchGroup(self, auth_token: str, group_id: str):
+        verify_auth = self.user_manager.getUserByAuth(auth_token)
+
+        if verify_auth['status'] == "OK":
+            return self.group_manager.searchGroup(group_id)
+        else:return verify_auth
+
+    def addAdmin(
+            self,
+            auth_token: str,
+            member_user_id: str,
+            group_id: str
+        ):
+        return self.group_manager.addAdmin(
+            auth_token,
+            member_user_id,
+            group_id
+        )
+    
+    def removeAdmin(
+            self,
+            auth_token: str,
+            member_user_id: str,
+            group_id: str
+        ):
+        return self.group_manager.removeAdmin(
+            auth_token,
+            member_user_id,
+            group_id
+        )
+    
+    def addMemberToGroup(
+            self,
+            auth_token: str,
+            group_id: str,
+            user_id: str
+        ):
+        return self.group_manager.addMemberToGroup(auth_token, group_id, user_id)
+    
+    def getGroupMembersByID(self, auth_token: str, group_id: str):
+        return self.group_manager.getGroupMembersByID(auth_token, group_id)
+    
+    def getGroupMembersByGID(self, auth_token: str, gid: str):
+        return self.group_manager.getGroupMembersByGID(auth_token, gid)
+    
+    def removeMemberFromGroup(self, auth_token: str, member_user_id: str, group_id: str):
+        return self.group_manager.removeMemberFromGroup(auth_token, member_user_id, group_id)
+    
+    def pinMessage(self, auth_token: str, message_id: str, group_id: str):
+        return self.group_manager.pinMessage(auth_token, message_id, group_id)
+    
+    def clearPin(self, auth_token: str, group_id: str):
+        return self.group_manager.clearPin(auth_token, group_id)
+    
+    def lockGroup(self, auth_token: str, group_id: str):
+        return self.group_manager.lockGroup(auth_token, group_id)
+    
+    def unlockGroup(self, auth_token: str, group_id: str):
+        return self.group_manager.unlockGroup(auth_token, group_id)
+    
+    def getGroupMessages(self, auth_token: str, group_id: str):
+        return self.group_manager.getGroupMessages(auth_token, group_id)
+    
+    def getGroupAdmins(self, group_id: str):
+        return self.group_manager.getGroupAdmins(group_id)
+    
+    def editGroupMessage(
+            self,
+            from_auth: str,
+            group_id: str,
+            message_id: str,
+            new_message: str
+    ):
+        return self.group_manager.editMessage(
+            from_auth,
+            group_id,
+            message_id,
+            new_message
+        )
+    
+    def getUserGroups(self, auth_token: str):
+        return self.group_manager.getGroupUserExists(auth_token)
+    
+    def leaveGroup(self, auth_token: str, group_id: str):
+        return self.group_manager.leaveGroup(auth_token, group_id)
+    
+    def joinGroup(self, auth_token: str, group_id: str):
+        return self.group_manager.joinGroup(auth_token, group_id)
+    
+    # ---- Private Functions ----
+
+    def addIndex(self, user_id: str):
+        return self.private_manager.addIndex(user_id)
+    
+    def sendPrivateMessage(
+            self,
+            from_auth: str,
+            to_user_id: str,
+            message: str,
+            timestamp: str = None,
+            reply_data: dict = {}
+    ):
+        return self.private_manager.addPrivateMessage(
+            from_auth,
+            to_user_id,
+            message,
+            timestamp,
+            reply_data
+        )
+    
+    def getPrivateMessageByID(self, user_id: str, message_id: str):
+        return self.private_manager.getMessageByID(user_id, message_id)
+    
+    def getPrivateMessageByUserID(self, user_id: str):
+        return self.private_manager.getMessagesByUserID(user_id)
+    
+    def editPrivateMessage(
+            self,
+            from_auth_token: str,
+            message_id: str,
+            new_message: str
+    ):
+        return self.private_manager.editMessage(from_auth_token, message_id, new_message)
+    
+    def markMessageAsRead(self, from_auth_token: str, message_id: str):
+        return self.private_manager.markMessageAsRead(from_auth_token, message_id)

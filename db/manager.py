@@ -10,6 +10,8 @@ class UserManager(object):
         self.users_dbs = 'data/users.db'
         self.user_conn = sqlite3.connect(self.users_dbs, check_same_thread=False)
         self.create_table()
+        self.default_profile = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&'
+        self.ghostly = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQT6T83Gykijshi_fAb3q1piW3LJ5i0eXkK4w&s"
         self.lisence = "e765defd954e1e682c81ab4956f5df00"
         self.reflex_api = f"http://api-free.ir/api2/very?token={self.lisence}&phone="
         self.points = ["user", "admin", "dev"]
@@ -17,24 +19,24 @@ class UserManager(object):
 
     def sendCode(self, phone: str):
         try:
-            data = requests.post(self.reflex_api + phone)
+            data = requests.post(self.reflex_api + self.trim_phone_number(phone))
             data = data.json()
-            data['error'] = False
+            data['status'] = "OK"
             return data
         except Exception as ERROR_CONNECTION:
             return {
-                "error": True,
+                "status": "WEB_SERVICE_ERROR",
                 "message": str(ERROR_CONNECTION)
             }
 
     def agreeCode(self, phone: str, code: str):
         try:
-            data = requests.post(self.reflex_api + phone + "&code=" + code).json()
-            data['error'] = False
+            data = requests.post(self.reflex_api + self.trim_phone_number(phone) + "&code=" + code).json()
+            data['status'] = "OK"
             return data
         except Exception as ERROR_CONNECTION:
             return {
-                "error": True,
+                "status": "WEB_SERVICE_ERROR",
                 "message": str(ERROR_CONNECTION)
             }
 
@@ -96,6 +98,9 @@ class UserManager(object):
         for user in self.getUsers():
             user = json.loads(user[1])
             if user['point'] == "admin":
+                del user['token']
+                if user['settings']['hide_phone_number']:
+                    del user['phone']
                 admins.append(user)
         
         return {"status": "OK", "users": admins}
@@ -105,15 +110,17 @@ class UserManager(object):
         for user in self.getUsers():
             user = json.loads(user[1])
             if user['point'] == "dev":
+                del user['token']
+                if user['settings']['hide_phone_number']:
+                    del user['phone']
                 devs.append(user)
         
         return {"status": "OK", "users": devs}
 
     def addUser(self, username: str, phone: str, fullname: str, bio: str = "", profile: str = None):
-        default_profile = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&'
 
         if profile is None or profile.strip() == '':
-            profile = default_profile
+            profile = self.default_profile
 
         isexists_phone = self.getUserByPhone(phone)
         isexists_uname = self.getUserByUName(username)
@@ -161,12 +168,11 @@ class UserManager(object):
 
     def suspensionUser(self, auth_token: str):
         verify_user = self.getUserByAuth(auth_token)
-        ghostly = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQT6T83Gykijshi_fAb3q1piW3LJ5i0eXkK4w&s"
 
         if verify_user['status'] == "OK":
             verify_user['user']['is_suspension'] = True
             verify_user['user']['fullname'] = "suspension account".title()
-            verify_user['user']['profile'] = ghostly
+            verify_user['user']['profile'] = self.ghostly
 
             self.user_conn.execute("UPDATE users SET user_data WHERE user_id = ?", (json.dumps(verify_user['user']), verify_user['user']['user_id']))
             self.user_conn.commit()
@@ -187,7 +193,6 @@ class UserManager(object):
             inner_gif: str = None,
             hide_phone_number: bool = None,
             can_join_groups: bool = None,
-            can_see_profiles: bool = None,
         ):
 
         verify = self.getUserByAuth(auth_token)
@@ -211,7 +216,6 @@ class UserManager(object):
                     "settings": {
                         "hide_phone_number": hide_phone_number if not hide_phone_number is None else verify['user']['settings']['hide_phone_number'],
                         "can_join_groups": can_join_groups if not can_join_groups is None else verify['user']['settings']['can_join_groups'],
-                        "can_see_profiles": can_see_profiles if not can_see_profiles is None else verify['user']['settings']['can_see_profiles'],
                         "inner_gif": inner_gif if not inner_gif is None else verify['user']['settings']['inner_gif']
                     }
                 }
@@ -239,7 +243,7 @@ class UserManager(object):
         else:return {'status': 'TOKEN_INVALID | NOT_FOUND', 'user': {}}
     
             
-    def online(self, username, auth_token, status = 'offline'):
+    def online(self, auth_token, status = 'offline'):
             user = self.getUserByAuth(auth_token)
             if user['status'] == "OK":
                 user['user']['status'] = status
@@ -265,18 +269,6 @@ class UserManager(object):
             return user
         else:
             return {'status': 'NOT_FOUND', 'user': {}}
-    
-    def getUsernameByID(self, auth_token, getUser):
-        user = self.getUserByAuth(auth_token=auth_token)
-        if user['status'] == 'OK':
-            guser = self.getUserByUName(getUser)
-            if guser['status']:
-                user = guser['user']
-                return {'status': 'OK', 'user': {'fullname': user['fullname'], 'bio': user['bio'], 'username': getUser, 'profile': user['profile'], 'status': user['status'], 'point': user['point'], 'settings': user['settings']}}
-            else:
-                return {'status': 'USER_NOT_FOUND', 'user': {}}
-        else:
-            return {'status': 'TOKEN_INVALID | NOT_FOUND', 'user': {}}
 
     def generate_auth_token(self):
         return secrets.token_urlsafe()
@@ -294,6 +286,7 @@ class UserManager(object):
             user = json.loads(user[1])
             if user['username'] == username or user['username'].startswith(username):
                 if user['settings']['hide_phone_number']:del user['phone']
+                del user['token']
 
                 finded_users.append(user)
 
@@ -428,10 +421,10 @@ class GroupManager(object):
 
         if verify_user['status'] == "OK":
             if verify_group['status'] == "OK":
-                if not verify_user['user']['username'] in verify_group['group']['admins']:
+                if not verify_user['user']['user_id'] in verify_group['group']['admins']:
                     if verify_group['group']['allow_to_send_messages']:
                         message_data = {
-                            "from_user": verify_user['user']['username'],
+                            "from_user": verify_user['user']['user_id'],
                             "gid": gid,
                             "group_title": verify_group['group']['group_title'],
                             "group_id": verify_group['group']['group_id'],
@@ -461,7 +454,7 @@ class GroupManager(object):
 
                 else:
                     message_data = {
-                        "from_user": verify_user['user']['username'],
+                        "from_user": verify_user['user']['user_id'],
                         "gid": gid,
                         "group_title": verify_group['group']['group_title'],
                         "group_id": verify_group['group']['group_id'],
@@ -509,7 +502,7 @@ class GroupManager(object):
         if owner_veri['status'] == "OK":
             if membr_veri['status'] == "OK":
                 if group_veri['status'] == "OK":
-                    if owner_veri['user']['username'] == group_veri['group']['owner']:
+                    if owner_veri['user']['user_id'] == group_veri['group']['owner']:
                         if member_user_id in group_veri['group']['members']:
                             if not member_user_id in group_veri['group']['admins']:
                                 group_veri['group']['admins'].append(member_user_id)
@@ -531,7 +524,7 @@ class GroupManager(object):
         if owner_veri['status'] == "OK":
             if membr_veri['status'] == "OK":
                 if group_veri['status'] == "OK":
-                    if owner_veri['user']['username'] == group_veri['group']['owner']:
+                    if owner_veri['user']['user_id'] == group_veri['group']['owner']:
                         if admin_user_id in group_veri['group']['members']:
                             if admin_user_id in group_veri['group']['admins']:
                                 group_veri['group']['admins'].remove(admin_user_id)
@@ -554,7 +547,7 @@ class GroupManager(object):
             if verify_user['status'] == "OK":
                 if verify_group['status'] == "OK":
                     if verify_user['user']['settings']['can_join_groups']:
-                        if not verify_user['user']['username'] in verify_group['group']['members']:
+                        if not verify_user['user']['user_id'] in verify_group['group']['members']:
                             verify_group['group']['members'].append(user_id)
                             self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(verify_group['group']), verify_group['group']['gid']))
                             self.group_conn.commit()
@@ -562,7 +555,7 @@ class GroupManager(object):
                         else:return {"status": "EXISTS_MEMBER"}
                     else:return {"statis": "UNAVAILABLE_ACTION", "members": verify_group['group']['members']}
                 else:return {"status": "INVALID_GROUP_ID"}
-            else:return {"status": "INVALID_USERNAME"}
+            else:return {"status": "INVALID_USER_ID"}
         else:return {"status": "INVALID_TOKEN"}
 
     def getGroupMembersByID(self, auth_token: str, group_id: str) -> dict:
@@ -601,7 +594,7 @@ class GroupManager(object):
             if vm['status'] == "OK":
                 if vg['status'] == "OK":
                     if member_user_id in vg['group']['members']:
-                        if not member_user_id == v['user']['user_id']:
+                        if not member_user_id == vg['group']['owner']:
                             if v["user"]['user_id'] in vg['group']['admins']:
                                 vg['group']['members'].remove(member_user_id)
                                 self.group_conn.execute("UPDATE groups SET group_data = ? WHERE group_id = ?", (json.dumps(vg['group']), vg['group']['gid']))
@@ -681,10 +674,16 @@ class GroupManager(object):
             else:return {"status": "INVALID_GROUP_ID"}
         else:return {"status": "INVALID_TOKEN"}
 
-    def getGroupMessages(self, group_id: str):
+    def getGroupMessages(self, auth_token: str, group_id: str):
         verify = self.getGroupByID(group_id)
+        v_user = self.user_manager.getUserByAuth(auth_token)
 
-        if verify['status'] == "OK":return {"status": "OK", "messages": verify['group']['messages'], "last_message": verify['group']['last_message']}
+        if verify['status'] == "OK":
+            if v_user['status'] == "OK":
+                if v_user['user']['user_id'] in verify['group']['members']:
+                    return {"status": "OK", "messages": verify['group']['messages'], "last_message": verify['group']['last_message']}
+                else:return {"status": "AUTH_DOESNT_IN_GROUP"}
+            else:return {"status": "INVALID_TOKEN"}
         else:return {"status": "INVALID_GROUP_ID", "messages": [], "last_message": {}}
 
     def getGroupAdmins(self, group_id: str):
@@ -723,7 +722,7 @@ class GroupManager(object):
 
         if verify_user['status'] == "OK":
             if verify_group_msg['status'] == "OK":
-                if verify_group_msg['message']['from_user'] == verify_user['user']['username']:
+                if verify_group_msg['message']['from_user'] == verify_user['user']['user_id']:
                     messages = list(verify_group_msg['group']['messages'])
                     msg_index = messages.index(verify_group_msg['message'])
                     messages.remove(verify_group_msg['message'])
@@ -774,7 +773,7 @@ class GroupManager(object):
                     return {"status": "OK", "group": verify_group['group']}
                 else:return {"status": "AUTH_DOESNT_IN_GROUP", "group": {}}
             else:return {"status": "INVALID_GROUP_ID"}
-        else:return {"status": "INVALID_AUTH"}
+        else:return {"status": "INVALID_TOKEN"}
 
     def joinGroup(
             self,
@@ -799,7 +798,7 @@ class GroupManager(object):
                     return {"status": "OK", "group": verify_group['group']}
                 else:return {"status": "AUTH_IN_GROUP", "group": {}}
             else:return {"status": "INVALID_GROUP_ID"}
-        else:return {"status": "INVALID_AUTH"}
+        else:return {"status": "INVALID_TOKEN"}
 
 
 class PrivateManager(object):
@@ -822,9 +821,12 @@ class PrivateManager(object):
 
         for chat in chats:
             if chat[0] == user_id:
-                return {"status": "OK", "chat": json.loads(chat[1])}
+                chat = json.loads(chat[1])
+                if "user_auth" in list(chat.keys()):del chat['user_auth']
+                return {"status": "OK", "chat": chat}
             
         return {"status": "INVALID_USER_ID", "chat": {}}
+    
 
     def addIndex(
             self,
@@ -837,6 +839,7 @@ class PrivateManager(object):
             if not verify_chat['status'] == "OK":
                 involved_data = {
                     "user_id": user_id,
+                    "user_auth": verify_user['user']['token'],
                     "messages": [],
                     "last_message": {}
                 }
@@ -908,10 +911,18 @@ class PrivateManager(object):
             return {"status": "UNREACHABLE_MESSAGE_ID"}
         else:return {"status": chat['status']}
 
-    def editMessage(self, from_user_id: str, message_id: str, new_message: str):
+    def getMessagesByUserID(self, user_id: str):
+        chats = self.getChats()
+
+        for chat in chats:
+            if chat[0] == user_id:
+                chat = json.loads(chat[1])
+                return {"status": "OK", "messages": chat['messages'], "last_message": chat['last_message']}
+
+    def editMessage(self, from_auth_token: str, message_id: str, new_message: str):
+        from_user_id = self.user_manager.getUserByAuth(from_auth_token)['user']['user_id']
         from_chat = self.getChatByUID(from_user_id)
         from_msg = self.getMessageByID(from_user_id, message_id)
-
         
         if from_chat['status'] == "OK":
             if from_msg['status'] == "OK":
@@ -955,10 +966,10 @@ class PrivateManager(object):
         else:
             return {"status": "INVALID_USER_ID"}
         
-    def markMessageAsRead(self, from_user_id: str, message_id: str):
+    def markMessageAsRead(self, from_auth_token: str, message_id: str):
+        from_user_id = self.user_manager.getUserByAuth(from_auth_token)['user']['user_id']
         from_chat = self.getChatByUID(from_user_id)
         from_msg = self.getMessageByID(from_user_id, message_id)
-
         
         if from_chat['status'] == "OK":
             if from_msg['status'] == "OK":
@@ -1039,7 +1050,7 @@ class PrivateManager(object):
 # data = PrivateManager(UserManager()).addIndex("2615108647")
 # data = PrivateManager(UserManager()).addPrivateMessage("8hHaNxL5i5OLwT1nvhj5URoFDxsratbC7cscxGmdZHA", "2615108647", "Jafar is Dalghak")
 
-# data = PrivateManager(UserManager()).markMessageAsRead("2968877301", "2615108647", "156622353641")
+# data = PrivateManager(UserManager()).getMessagesByUserID("2968877301")#markMessageAsRead("2968877301", "2615108647", "156622353641")
 
 # rich.print(data)
 
