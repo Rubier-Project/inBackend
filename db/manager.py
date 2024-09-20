@@ -1005,6 +1005,57 @@ class PrivateManager(object):
                 return {"status": "UNREACHABLE_MESSAGE_ID"}
         else:
             return {"status": "INVALID_USER_ID"}
+        
+def getMessages(
+        auth_token: str,
+        user_manager: UserManager,
+        private_manager: PrivateManager,
+        group_manager: GroupManager
+    ):
+
+    verify = user_manager.getUserByAuth(auth_token)
+
+    if verify['status'] == "OK":
+        Messages = {}
+        prvs = private_manager.getChatByUID(verify['user']['user_id'])
+        grps = group_manager.getGroupUserExists(auth_token)
+
+        Messages['private'] = prvs['chat']['messages']
+        Messages['group'] = []
+
+        for group in grps['groups']:
+            Messages['group'].append(group['messages'])
+
+        return {"status": "OK", "messages": Messages}
+    else:return {"status": "INVALID_TOKEN", "messages": []}
+
+def getChats(
+        auth_token: str,
+        user_manager: UserManager,
+        private_manager: PrivateManager,
+        group_manager: GroupManager
+    ):
+    verify = user_manager.getUserByAuth(auth_token)
+
+    if verify['status'] == "OK":
+        users = set()
+        msgs = getMessages(
+            auth_token,
+            user_manager,
+            private_manager,
+            group_manager
+        )
+
+        for private in msgs['messages']['private']:
+            users.add(private['reciver_user_sender'])
+            users.add(private['sender_user_id'])
+
+        for group in msgs['messages']['group']:
+            users.add(group['gid'])
+
+        if verify['user']['user_id'] in users:
+            users.remove(verify['user']['user_id'])
+        return {"status": "OK", "chats": list(users)}
 
 
 # print(UserManager().add_user("ali", "+9843278432", "Someone"))
@@ -1050,11 +1101,30 @@ class PrivateManager(object):
 # data = PrivateManager(UserManager()).addIndex("2615108647")
 # data = PrivateManager(UserManager()).addPrivateMessage("8hHaNxL5i5OLwT1nvhj5URoFDxsratbC7cscxGmdZHA", "2615108647", "Jafar is Dalghak")
 
-# data = PrivateManager(UserManager()).getMessagesByUserID("2968877301")#markMessageAsRead("2968877301", "2615108647", "156622353641")
+
+
+# data = getChats("wDUaIFS1e_UFk9p4PdVwwz-_gsX3qe5cPEJEhmgdBW0", UserManager(), PrivateManager(UserManager()), GroupManager(UserManager())) #PrivateManager(UserManager()).getMessagesByUserID("2968877301")#markMessageAsRead("2968877301", "2615108647", "156622353641")
 
 # rich.print(data)
 
 """
+
+{
+    'status': 'OK',
+    'user': {
+        'phone': '0463724',
+        'username': 'rea',
+        'fullname': 'someone',
+        'bio': '',
+        'profile': 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFEZSqk8dJbB0Xc-fr6AWv2aocxDdFpN6maQ&',
+        'token': 'wDUaIFS1e_UFk9p4PdVwwz-_gsX3qe5cPEJEhmgdBW0',
+        'user_id': '9009809330',
+        'status': 'online',
+        'point': 'user',
+        'is_suspension': False,
+        'settings': {'hide_phone_number': True, 'can_join_groups': True, 'inner_gif': None}
+    }
+}
 
 {
     'status': 'OK',

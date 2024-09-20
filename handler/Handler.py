@@ -1,4 +1,4 @@
-from db.manager import UserManager, PrivateManager, GroupManager
+from db.manager import UserManager, PrivateManager, GroupManager, getChats, getMessages
 
 
 class Handler:
@@ -274,7 +274,7 @@ class Handler:
     def getPrivateMessageByID(self, user_id: str, message_id: str):
         return self.private_manager.getMessageByID(user_id, message_id)
     
-    def getPrivateMessageByUserID(self, user_id: str):
+    def getPrivateMessagesByUserID(self, user_id: str):
         return self.private_manager.getMessagesByUserID(user_id)
     
     def editPrivateMessage(
@@ -287,3 +287,21 @@ class Handler:
     
     def markMessageAsRead(self, from_auth_token: str, message_id: str):
         return self.private_manager.markMessageAsRead(from_auth_token, message_id)
+
+    # ---- Last Functions ----
+
+    def getChats(self, auth_token: str):
+        return getChats(
+            auth_token,
+            self.user_manager,
+            self.private_manager,
+            self.group_manager
+        )
+    
+    def getMessages(self, auth_token: str):
+        return getMessages(
+            auth_token,
+            self.user_manager,
+            self.private_manager,
+            self.group_manager
+        )

@@ -1,16 +1,23 @@
 import socketio
 import rich
+from utlis.encrypt import inCrypto
+import json
 
 sio = socketio.Client()
+crypt = inCrypto()
+def_key = "TMP_OBJECT_CODE_!@#$%^&*()-_+'PQ"
 
 @sio.event
 def connect():
     print("connected socket io")
-    sio.emit("getMe", {"auth_token": "Vv9pGB_TtSMydHikcv2eLsHgxIzmkL9dQcu-PtpV5cA"})
+    data = {"fullname": "YOoooo", "username": "mmd", "phone_number": "+989904541580"}
+    enc_data = crypt.encrypt(json.dumps(data), def_key)['enc']
+    sio.emit("signup", {"data_enc": enc_data})
 
-@sio.on("getMe")
+@sio.on("signup")
 def sign(d):
-    rich.print(d)
+    print(d)
+    rich.print(crypt.decrypt(d['data_enc']['enc'], def_key)['dec'])
 
 sio.connect("http://127.0.0.1:8080")
 sio.wait()
